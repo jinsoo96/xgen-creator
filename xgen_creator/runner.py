@@ -16,7 +16,7 @@ from .pipeline.build import build
 from .pipeline.roles import load_roles
 from .rules.loader import load_rules, compose_context
 
-FORMS_ALL = ("journey", "screen-spec", "test-report")
+FORMS_ALL = ("journey", "screen-spec", "test-report", "api-spec")
 
 
 def journey_files(journey_dir: str | Path) -> list[Path]:

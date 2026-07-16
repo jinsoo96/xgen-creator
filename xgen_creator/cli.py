@@ -96,7 +96,7 @@ def _cmd_watch(args, config) -> int:
                     changed.append(jp)
             for jp in changed:
                 try:
-                    for form in ("journey", "screen-spec", "test-report"):
+                    for form in ("journey", "screen-spec", "test-report", "api-spec"):
                         report = build([jp], args.out or config["out_dir"], form=form)
                         if report["built"]:
                             print(f"  재생성 {jp.stem} [{form}]: "
@@ -315,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     p_build.add_argument("--journey", nargs="*", default=[])
     p_build.add_argument("--out", default=None)
     p_build.add_argument("--form", default="journey",
-                         choices=["journey", "screen-spec", "test-report"],
+                         choices=["journey", "screen-spec", "test-report", "api-spec"],
                          help="산출물 양식 (기본 journey=챕터 문서)")
     p_build.add_argument("--no-html", action="store_true")
     p_build.add_argument("--pdf", action="store_true", help="html을 PDF로도 (Edge headless)")

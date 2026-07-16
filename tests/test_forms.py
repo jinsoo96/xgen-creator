@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from test_docgen import make_journey
+from xgen_creator.docgen import Step
 from xgen_creator.docgen.forms import render_form, FORMS
 from xgen_creator.pipeline import build
 
@@ -50,6 +51,50 @@ class ScreenSpecFormTest(unittest.TestCase):
     def test_unknown_form_raises(self):
         with self.assertRaises(ValueError):
             render_form(make_journey(), "no-such-form", ".")
+
+
+class ApiSpecFormTest(unittest.TestCase):
+    def test_md_merges_duplicate_calls_and_marks_no_evidence(self):
+        journey = make_journey()
+        journey.steps += [
+            Step(idx=3, action="click", selector="button.retry",
+                 url_before="http://localhost:3000/settings",
+                 url_after="http://localhost:3000/settings",
+                 api=[{"method": "POST", "url": "http://localhost:8000/api/login"}]),
+            Step(idx=4, action="click", selector="a.profile",
+                 url_before="http://localhost:3000/settings",
+                 url_after="http://localhost:3000/settings",
+                 api=[{"method": "GET", "url": "http://localhost:8000/api/me"}]),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            (path_md, path_html) = render_form(journey, "api-spec", tmp)
+            md = path_md.read_text(encoding="utf-8")
+            self.assertIn("# API 명세서", md)
+            self.assertIn("| 관측 API | 2건 (백엔드 트레이스 확보 1건) |", md)
+            # 중복 URL 합침 — 스텝 1(백엔드 증거)+스텝 3이 한 행, 호출 2회
+            self.assertIn("| POST | `http://localhost:8000/api/login` | 2 | 1, 3 "
+                          "| 200 | 12.3ms | 파일 1개 (auth.py) · 라인이벤트 5건 |", md)
+            # 백엔드 트레이스 없는 API는 증거 없음 정직 표기
+            self.assertIn("| GET | `http://localhost:8000/api/me` | 1 | 4 "
+                          "| 증거 없음 | 증거 없음 | 증거 없음 |", md)
+
+            html = path_html.read_text(encoding="utf-8")
+            self.assertIn("<h1>API 명세서", html)
+            self.assertIn("<code>http://localhost:8000/api/me</code>", html)
+            self.assertIn("증거 없음", html)
+
+    def test_no_observed_api(self):
+        journey = make_journey()
+        for s in journey.steps:
+            s.api, s.backend = [], None
+        with tempfile.TemporaryDirectory() as tmp:
+            md = render_form(journey, "api-spec", tmp, fmt="md")[0] \
+                .read_text(encoding="utf-8")
+            self.assertIn("| 관측 API | 0건", md)
+            self.assertIn("(증거 없음 — 관측된 API 호출이 없다)", md)
+
+    def test_registry_name(self):
+        self.assertEqual(FORMS["api-spec"]["이름"], "API 명세서")
 
 
 class PipelineFormTest(unittest.TestCase):

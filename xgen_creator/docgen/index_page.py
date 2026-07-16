@@ -8,7 +8,7 @@ import html
 from pathlib import Path
 
 _LABELS = {"screen-spec": "화면정의서", "test-report": "테스트결과서",
-           "SUMMARY": "챕터 목차"}
+           "api-spec": "API 명세서", "SUMMARY": "챕터 목차"}
 _CSS = """
 body{font-family:'Segoe UI','Malgun Gothic',sans-serif;background:#0d1420;color:#d8e2ef;
      max-width:1080px;margin:2.5rem auto;padding:0 1.2rem}

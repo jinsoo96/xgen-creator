@@ -6,6 +6,7 @@ wikidocs류 챕터 나열이 아니라 XGEN CREATOR 고유 양식: 모든 칸이
 양식 레지스트리:
   screen-spec  화면정의서 — 화면 단위(진입경로·구성요소·소스근거·연동API·백엔드 처리)
   test-report  테스트결과서 — 스텝 단위(수행내용·결과·HTTP·판정·증거 + 실행소스 부록)
+  api-spec     API 명세서 — API 단위(메서드·경로·관측스텝·상태·처리시간·백엔드 실행)
 
 새 양식 추가 = 이 모듈에 (md, html) 렌더 함수 한 쌍 등록.
 """
@@ -172,6 +173,105 @@ def _test_report_md(journey: Journey) -> str:
     return "\n".join(out)
 
 
+# ---------------------------------------------------------------- API 명세서
+def _api_inventory(journey: Journey) -> list[dict]:
+    """API 단위 집계 — step.api 관측과 step.backend 트레이스를 URL 기준으로 합친다."""
+    order: list[tuple[str, str]] = []
+    rows: dict[tuple[str, str], dict] = {}
+
+    def row(method: str, url: str) -> dict:
+        key = (method, url)
+        if key not in rows:
+            order.append(key)
+            rows[key] = {"method": method, "url": url, "steps": [], "count": 0,
+                         "backends": []}
+        return rows[key]
+
+    for step in journey.steps:
+        touched: list[tuple[str, str]] = []
+        for call in step.api:
+            method = (call.get("method") or "-").upper()
+            r = row(method, call.get("url") or "-")
+            r["count"] += 1
+            if step.idx not in r["steps"]:
+                r["steps"].append(step.idx)
+            touched.append((method, r["url"]))
+        b = step.backend
+        if not b:
+            continue
+        bm, bp = (b.get("method") or "-").upper(), b.get("path") or ""
+        target = next((rows[k] for k in touched
+                       if k[0] == bm and bp and k[1].split("?", 1)[0].endswith(bp)), None)
+        if target is None:
+            target = row(bm, bp or "-")
+            target["count"] += 1
+            if step.idx not in target["steps"]:
+                target["steps"].append(step.idx)
+        target["backends"].append(b)
+    return [rows[k] for k in order]
+
+
+def _api_status(r: dict) -> str:
+    seen: list[str] = []
+    for b in r["backends"]:
+        if b.get("status") is not None and str(b["status"]) not in seen:
+            seen.append(str(b["status"]))
+    return ", ".join(seen) if seen else NO_EVIDENCE
+
+
+def _api_duration(r: dict) -> str:
+    durs = [b.get("duration_ms") for b in r["backends"] if b.get("duration_ms") is not None]
+    return ", ".join(f"{d}ms" for d in durs) if durs else NO_EVIDENCE
+
+
+def _api_exec(r: dict) -> str:
+    if not r["backends"]:
+        return NO_EVIDENCE
+    files: list[str] = []
+    events = 0
+    for b in r["backends"]:
+        events += b.get("event_count") or 0
+        files += [f for f in b.get("files", {}) if f not in files]
+    desc = f"파일 {len(files)}개"
+    if files:
+        desc += f" ({', '.join(Path(f).name for f in files[:3])}" \
+                + (" 외" if len(files) > 3 else "") + ")"
+    return f"{desc} · 라인이벤트 {events}건"
+
+
+def _api_spec_md(journey: Journey) -> str:
+    apis = _api_inventory(journey)
+    traced = sum(1 for r in apis if r["backends"])
+    out = [
+        f"# API 명세서 — {journey.title}",
+        "",
+        "| 문서 항목 | 내용 |",
+        "|---|---|",
+        f"| 여정 ID | `{journey.id}` |",
+        f"| 대상 시스템 | {journey.base_url or NO_EVIDENCE} |",
+        f"| 증거 수집 시각 | {journey.created or NO_EVIDENCE} |",
+        f"| 관측 API | {len(apis)}건 (백엔드 트레이스 확보 {traced}건) |",
+        "| 작성 방식 | XGEN CREATOR 자동 생성 (관측된 호출만 수록) |",
+        "",
+        "## API 목록 (관측분)",
+        "",
+    ]
+    if not apis:
+        out += [f"({NO_EVIDENCE} — 관측된 API 호출이 없다)", ""]
+    else:
+        out += ["| 메서드 | 경로 | 호출 횟수 | 관측 스텝 | 응답 상태 | 처리 시간 | 백엔드 실행 |",
+                "|---|---|---|---|---|---|---|"]
+        for r in apis:
+            steps = ", ".join(str(i) for i in r["steps"])
+            out.append(f"| {r['method']} | `{r['url']}` | {r['count']} | {steps} "
+                       f"| {_api_status(r)} | {_api_duration(r)} | {_api_exec(r)} |")
+        out.append("")
+    out += ["---", "",
+            "> 본 문서는 여정 수행 중 관측된 API 호출의 렌더이다. 관측되지 않은 API는 "
+            f"수록하지 않으며, 확인 불가 칸은 \"{NO_EVIDENCE}\"으로 남긴다.", ""]
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------- HTML 공통
 _FORM_CSS = """
 body{font-family:'Segoe UI',system-ui,'Malgun Gothic',sans-serif;max-width:1000px;
@@ -304,10 +404,39 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
     return _shell(f"테스트결과서 — {journey.title}", body)
 
 
+def _api_spec_html(journey: Journey, embed_shots: bool = True) -> str:
+    apis = _api_inventory(journey)
+    traced = sum(1 for r in apis if r["backends"])
+    body = [f"<h1>API 명세서 — {_esc(journey.title)}</h1>",
+            "<table><tr><th>여정 ID</th><td><code>", _esc(journey.id), "</code></td></tr>",
+            f"<tr><th>대상 시스템</th><td>{_esc(journey.base_url) or NO_EVIDENCE}</td></tr>",
+            f"<tr><th>증거 수집 시각</th><td>{_esc(journey.created) or NO_EVIDENCE}</td></tr>",
+            f"<tr><th>관측 API</th><td>{len(apis)}건 (백엔드 트레이스 확보 {traced}건)</td></tr>",
+            "<tr><th>작성 방식</th><td>XGEN CREATOR 자동 생성 (관측된 호출만 수록)</td></tr></table>",
+            "<h2>API 목록 (관측분)</h2>"]
+    if not apis:
+        body.append(f'<p class="footnote">{NO_EVIDENCE} — 관측된 API 호출이 없다.</p>')
+    else:
+        body.append("<table><tr><th>메서드</th><th>경로</th><th>호출 횟수</th>"
+                    "<th>관측 스텝</th><th>응답 상태</th><th>처리 시간</th>"
+                    "<th>백엔드 실행</th></tr>")
+        for r in apis:
+            steps = ", ".join(str(i) for i in r["steps"])
+            body.append(f"<tr><td>{_esc(r['method'])}</td><td><code>{_esc(r['url'])}</code></td>"
+                        f"<td>{r['count']}</td><td>{_esc(steps)}</td>"
+                        f"<td>{_esc(_api_status(r))}</td><td>{_esc(_api_duration(r))}</td>"
+                        f"<td>{_esc(_api_exec(r))}</td></tr>")
+        body.append("</table>")
+    body.append(f'<p class="footnote">본 문서는 여정 수행 중 관측된 API 호출의 렌더이다. '
+                f'관측되지 않은 API는 수록하지 않으며, 확인 불가 칸은 "{NO_EVIDENCE}"으로 남긴다.</p>')
+    return _shell(f"API 명세서 — {journey.title}", body)
+
+
 # ---------------------------------------------------------------- 레지스트리
 FORMS = {
     "screen-spec": {"md": _screen_spec_md, "html": _screen_spec_html, "이름": "화면정의서"},
     "test-report": {"md": _test_report_md, "html": _test_report_html, "이름": "테스트결과서"},
+    "api-spec": {"md": _api_spec_md, "html": _api_spec_html, "이름": "API 명세서"},
 }
 
 
