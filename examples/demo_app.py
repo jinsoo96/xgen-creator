@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from xgen_creator.trace import CreatorTraceMiddleware
+from xgen_creator.live import LiveHub, sse_endpoint, VIEWER_HTML, VIEWER_PATH, EVENTS_PATH
 from _mini_asgi import serve
 
 
@@ -76,8 +77,18 @@ async function run(){
 </script>"""
 
 
+hub = LiveHub()
+
+
 async def demo_app(scope, receive, send):
     if scope["type"] != "http":
+        return
+    if scope["path"] == EVENTS_PATH:
+        return await sse_endpoint(hub, scope, receive, send)
+    if scope["path"] == VIEWER_PATH:
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"text/html; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": VIEWER_HTML.encode()})
         return
     if scope["path"] == "/api/analyze":
         message = await receive()
@@ -97,7 +108,7 @@ async def demo_app(scope, receive, send):
 
 
 app = CreatorTraceMiddleware(demo_app, roots=[str(Path(__file__).parent)],
-                             trace_dir=".creator/traces")
+                             trace_dir=".creator/traces", live_hub=hub)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

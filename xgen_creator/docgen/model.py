@@ -33,6 +33,7 @@ class Journey:
     title: str
     base_url: str = ""
     created: str = ""                 # ISO8601 — 증거 수집 시각 (신선도 표기용)
+    video: str | None = None          # 수행 전체 녹화 파일 (bridge video_dir 사용 시)
     steps: list[Step] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -43,7 +44,7 @@ class Journey:
         steps = [Step(**s) for s in data.get("steps", [])]
         return cls(id=data["id"], title=data.get("title", data["id"]),
                    base_url=data.get("base_url", ""), created=data.get("created", ""),
-                   steps=steps)
+                   video=data.get("video"), steps=steps)
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)

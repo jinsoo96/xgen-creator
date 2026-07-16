@@ -30,6 +30,7 @@ class CreatorTraceMiddleware:
         max_events: int = 200_000,
         context: int = 2,
         flow_limit: int = 5000,
+        live_hub=None,
     ) -> None:
         self.app = app
         self.roots = roots
@@ -37,6 +38,7 @@ class CreatorTraceMiddleware:
         self.max_events = max_events
         self.context = context
         self.flow_limit = flow_limit
+        self.live_hub = live_hub  # live.LiveHub — 이벤트를 SSE 구독자에 실시간 송출
 
     @staticmethod
     def _trace_id(scope) -> str | None:
@@ -59,7 +61,8 @@ class CreatorTraceMiddleware:
                 status_holder["status"] = message["status"]
             await send(message)
 
-        tracer = LineTracer(self.roots, max_events=self.max_events)
+        on_event = self.live_hub.publish if self.live_hub is not None else None
+        tracer = LineTracer(self.roots, max_events=self.max_events, on_event=on_event)
         wait_start = time.perf_counter()
         with self._lock:
             lock_wait_ms = round((time.perf_counter() - wait_start) * 1000, 2)

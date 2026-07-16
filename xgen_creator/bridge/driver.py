@@ -22,12 +22,15 @@ class BridgeSession:
         shot_dir: str | Path = ".creator/journeys/shots",
         headless: bool = True,
         backend_wait: float = 8.0,
+        video_dir: str | Path | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.store = TraceStore(trace_store) if isinstance(trace_store, str) else trace_store
         self.shot_dir = Path(shot_dir)
         self.headless = headless
         self.backend_wait = backend_wait
+        self.video_dir = Path(video_dir) if video_dir else None
+        self.video_path: str | None = None  # __exit__ 후에 유효 (여정에 첨부)
         self._pw = None
         self._browser = None
         self._page = None
@@ -44,12 +47,22 @@ class BridgeSession:
             ) from exc
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=self.headless)
-        self._context = self._browser.new_context()
+        context_args = {}
+        if self.video_dir:
+            self.video_dir.mkdir(parents=True, exist_ok=True)
+            context_args = {"record_video_dir": str(self.video_dir),
+                            "record_video_size": {"width": 1280, "height": 720}}
+        self._context = self._browser.new_context(**context_args)
         self._page = self._context.new_page()
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         return self
 
     def __exit__(self, *exc) -> None:
+        if self.video_dir and self._page is not None:
+            try:
+                self.video_path = self._page.video.path()
+            except Exception:
+                self.video_path = None
         for closer in (self._context.close, self._browser.close, self._pw.stop):
             try:
                 closer()

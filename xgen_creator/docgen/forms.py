@@ -140,6 +140,7 @@ def _test_report_md(journey: Journey) -> str:
         f"| 총 스텝 | {len(journey.steps)} (성공/수행 {passed} · 실패 {failed}) |",
         f"| 백엔드 증거 확보 | {traced}/{len(journey.steps)} 스텝 |",
         "| 수행 방식 | XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스) |",
+    ] + ([f"| 수행 영상 | `{journey.video}` |"] if journey.video else []) + [
         "",
         "## 수행 결과",
         "",
@@ -258,7 +259,9 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
             f'(<span class="badge pass">성공/수행 {passed}</span> '
             f'<span class="badge fail">실패 {failed}</span>)</td></tr>',
             f"<tr><th>백엔드 증거 확보</th><td>{traced}/{len(journey.steps)} 스텝</td></tr>"
-            "<tr><th>수행 방식</th><td>XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스)</td></tr></table>",
+            + (f"<tr><th>수행 영상</th><td><code>{_esc(journey.video)}</code></td></tr>"
+               if journey.video else "")
+            + "<tr><th>수행 방식</th><td>XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스)</td></tr></table>",
             "<h2>수행 결과</h2>",
             "<table><tr><th>#</th><th>수행 내용</th><th>대상 요소</th><th>화면 전환</th>"
             "<th>판정</th><th>판정 근거</th><th>트레이스</th></tr>"]

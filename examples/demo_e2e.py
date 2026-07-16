@@ -26,10 +26,12 @@ def main() -> int:
     shot_dir = ROOT / ".creator/journeys" / JOURNEY_ID / "shots"
     raws = []
     with BridgeSession(BASE, trace_store=str(ROOT / ".creator/traces"),
-                       shot_dir=shot_dir) as session:
+                       shot_dir=shot_dir,
+                       video_dir=ROOT / ".creator/journeys" / JOURNEY_ID / "video") as session:
         raws.append(session.step("goto", "/"))
         raws.append(session.step("click", "[data-testid=analyze-button]",
                                  note="분석 실행 — 백엔드 /api/analyze가 트레이스된다"))
+    video_path = session.video_path
 
     steps = []
     for raw in raws:
@@ -40,9 +42,11 @@ def main() -> int:
                              if k in Step.__dataclass_fields__}))
 
     journey = Journey(id=JOURNEY_ID, title="Live Bridge 데모 여정", base_url=BASE,
-                      created=datetime.now(timezone.utc).isoformat(), steps=steps)
+                      created=datetime.now(timezone.utc).isoformat(),
+                      video=video_path, steps=steps)
     jpath = journey.save(ROOT / ".creator/journeys" / f"{JOURNEY_ID}.json")
     print(f"여정 저장: {jpath}")
+    print(f"수행 영상: {video_path or '(미녹화)'}")
 
     out_dir = ROOT / "docs_out" / JOURNEY_ID
     for form in ("test-report", "screen-spec"):
