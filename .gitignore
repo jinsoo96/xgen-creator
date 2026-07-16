@@ -22,3 +22,6 @@ creator.config.json
 creator.*.local.json
 XGEN-CREATOR-PLAN.md
 .mcp.json
+
+# 시현 영상·키프레임 (대용량 로컬 자산)
+/recordings/
