@@ -32,6 +32,7 @@ class BridgeSession:
         backend_wait: float = 8.0,
         video_dir: str | Path | None = None,
         reroute: list[tuple[str, str]] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.store = TraceStore(trace_store) if isinstance(trace_store, str) else trace_store
@@ -42,6 +43,7 @@ class BridgeSession:
         self.video_path: str | None = None  # __exit__ 후에 유효 (여정에 첨부)
         # [(url glob 패턴, target_base)] — 매칭 요청을 사이드카 등으로 션트(레포 무수정 관측)
         self.reroute = reroute or []
+        self.extra_headers = dict(extra_headers or {})  # identity 헤더 등, 매 스텝 병합
         self._pw = None
         self._browser = None
         self._page = None
@@ -92,7 +94,8 @@ class BridgeSession:
             raise ValueError(f"지원 액션 {ACTIONS} 중 하나여야 함: {action!r}")
         self._step_no += 1
         trace_id = uuid.uuid4().hex[:16]
-        self._context.set_extra_http_headers({"X-Creator-Trace": trace_id})
+        self._context.set_extra_http_headers(
+            {**self.extra_headers, "X-Creator-Trace": trace_id})
 
         page = self._page
         url_before = page.url

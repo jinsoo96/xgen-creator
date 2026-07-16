@@ -30,6 +30,7 @@ class CreatorTraceMiddleware:
         max_events: int = 200_000,
         context: int = 2,
         flow_limit: int = 5000,
+        slice_files_limit: int = 30,
         live_hub=None,
     ) -> None:
         self.app = app
@@ -38,6 +39,7 @@ class CreatorTraceMiddleware:
         self.max_events = max_events
         self.context = context
         self.flow_limit = flow_limit
+        self.slice_files_limit = slice_files_limit  # 거대 트레이스가 루프를 막지 않게
         self.live_hub = live_hub  # live.LiveHub — 이벤트를 SSE 구독자에 실시간 송출
 
     @staticmethod
@@ -67,25 +69,39 @@ class CreatorTraceMiddleware:
         with self._lock:
             lock_wait_ms = round((time.perf_counter() - wait_start) * 1000, 2)
             run_start = time.perf_counter()
+            error_repr = None
             tracer.start()
             try:
                 await self.app(scope, receive, send_wrap)
+            except BaseException as exc:
+                error_repr = repr(exc)
+                raise
             finally:
+                # 클라이언트 조기 이탈로 응답이 실패해도 실행 증거는 남긴다
                 result = tracer.stop()
                 duration_ms = round((time.perf_counter() - run_start) * 1000, 2)
-
-        files = result.executed_lines()
-        payload = {
-            "trace_id": trace_id,
-            "method": scope.get("method"),
-            "path": scope.get("path"),
-            "status": status_holder.get("status"),
-            "duration_ms": duration_ms,
-            "lock_wait_ms": lock_wait_ms,
-            "truncated": result.truncated,
-            "event_count": len(result.events),
-            "files": files,
-            "flow": result.flow(self.flow_limit),
-            "slices": [sl.to_dict() for sl in build_slices(files, context=self.context)],
-        }
-        self.store.save(trace_id, payload)
+                files = result.executed_lines()
+                # 슬라이스는 실행량 상위 N개 파일만 — 초과분은 개수로 정직 표기
+                ranked = sorted(files.items(), key=lambda kv: -len(kv[1]))
+                sliced = dict(ranked[:self.slice_files_limit])
+                payload = {
+                    "trace_id": trace_id,
+                    "method": scope.get("method"),
+                    "path": scope.get("path"),
+                    "status": status_holder.get("status"),
+                    "error": error_repr,
+                    "duration_ms": duration_ms,
+                    "lock_wait_ms": lock_wait_ms,
+                    "truncated": result.truncated,
+                    "event_count": len(result.events),
+                    "file_count": len(files),
+                    "slices_omitted_files": max(0, len(files) - len(sliced)),
+                    "files": sliced,
+                    "flow": result.flow(self.flow_limit),
+                    "slices": [sl.to_dict()
+                               for sl in build_slices(sliced, context=self.context)],
+                }
+                try:
+                    self.store.save(trace_id, payload)
+                except OSError:
+                    pass

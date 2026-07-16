@@ -29,7 +29,8 @@ class TraceStore:
         self.root.mkdir(parents=True, exist_ok=True)
         path = self._path(trace_id)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False,
+                                  separators=(",", ":")), encoding="utf-8")
         os.replace(tmp, path)  # 원자적 교체 — 브리지가 반쯤 쓴 파일을 읽지 않도록
         return path
 

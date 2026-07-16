@@ -28,10 +28,11 @@ def load_app(app_ref: str, app_dir: str):
 
 def run_sidecar(app_ref: str, app_dir: str, port: int, roots: list[str],
                 trace_dir: str = ".creator/traces", host: str = "127.0.0.1",
-                live_hub=None) -> None:
+                max_events: int = 50_000, live_hub=None) -> None:
     app = load_app(app_ref, app_dir)
     wrapped = CreatorTraceMiddleware(app, roots=roots or [app_dir],
-                                     trace_dir=trace_dir, live_hub=live_hub)
+                                     trace_dir=trace_dir, max_events=max_events,
+                                     live_hub=live_hub)
     try:
         import uvicorn
     except ImportError as exc:

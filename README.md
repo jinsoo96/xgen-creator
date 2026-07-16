@@ -53,21 +53,38 @@ creator doctor              # 자가검증 — 능력이 실제로 되는지
 
 ## 사용법
 
-### 1) 백엔드에 미들웨어 장착 (로컬 구동 스크립트에서 1줄 — 대상 레포에 커밋하지 않는다)
+### 0) 원샷 — "산출물 만들어줘"
+
+```bash
+creator make --steps examples/demo_steps.json --pdf
+# 명령 하나 = 여정 기록(영상 webm) → LLM 서술(source 모델) → 화면정의서·테스트결과서·챕터 문서 → PDF
+```
+
+### 1) 백엔드 관측 장착 — 두 가지 방법 (대상 레포에 커밋하지 않는다)
 
 ```python
+# A. 구동 스크립트에서 1줄
 from xgen_creator.trace import CreatorTraceMiddleware
 app = CreatorTraceMiddleware(app, roots=["/path/to/backend/src"])
+```
+
+```bash
+# B. 사이드카 — 앱 코드 수정 0. 대상 venv에서 감싸서 기동
+creator sidecar main:app --dir /path/to/backend --port 8201
+# 게이트웨이를 못 건드릴 땐 브리지 션트로 특정 API만 사이드카에 보낸다:
+creator record --steps steps.json --reroute "**/api/workflow/**=http://127.0.0.1:8201"
 ```
 
 ### 2) 여정 기록 → 산출물 빌드
 
 ```bash
-# 스텝 정의(JSON)대로 브라우저를 몰며 증거 수집 → 여정 JSON
-creator record --steps examples/demo_steps.json --title "로그인 여정"
+# 스텝 정의(JSON)대로 브라우저를 몰며 증거 수집 → 여정 JSON (--video로 녹화)
+creator record --steps examples/demo_steps.json --title "로그인 여정" --video
 
-# 여정 → wikidocs식 챕터 문서 (변경된 여정만 재렌더)
-creator doc build
+# 여정 → 산출물 양식 (변경된 여정만 재렌더, --pdf로 Edge headless PDF)
+creator doc build --form test-report --pdf     # 테스트결과서
+creator doc build --form screen-spec           # 화면정의서
+creator doc build                              # 챕터 문서(journey)
 ```
 
 ### 3) 단독 트레이스 (브라우저 없이)
@@ -105,7 +122,10 @@ creator roles                              # 모델 역할 (agent / source)
 | **실행 슬라이스** | 트레이스된 라인을 소스 발췌로 렌더(`>` 마커 = 실행됨). "돌아간 만큼만" 보여준다 |
 | **트레이스 저장소** | 미들웨어(쓰기)↔브리지(읽기)가 파일시스템으로 공유. 원자적 교체로 반쯤 쓴 파일 없음 |
 | **빌드 파이프라인** | 여정 해시 변경 감지 → 바뀐 것만 재렌더. 소스 변경 → 재수집 → 자동 재생성 |
+| **산출물 양식** | 화면정의서(screen-spec)·테스트결과서(test-report) 레지스트리. 새 양식 = 렌더 함수 한 쌍 등록 |
+| **모델 역할** | agent(여정 계획)와 source(증거 서술)를 분리 배정. LLM은 증거에 있는 것만 서술하고, 없는 건 "증거 없음" |
 | **Rule 컨텍스트** | `rules/*.md` = 산출물 규칙(용어·톤·규격). LLM 서술 단계에 자동 주입 |
+| **라이브 소스 스크린** | 트레이서 이벤트를 SSE로 스트리밍 — 화면 옆에서 "지금 도는 소스 라인"이 흐른다 |
 
 ## 경계 (설계 원칙)
 

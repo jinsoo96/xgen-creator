@@ -147,7 +147,8 @@ def _cmd_sidecar(args, config) -> int:
         live_hub = LiveHub()
     run_sidecar(args.app, args.dir, args.port,
                 roots=args.roots or config.get("backend_roots") or [args.dir],
-                trace_dir=args.trace_dir or config["trace_dir"], live_hub=live_hub)
+                trace_dir=args.trace_dir or config["trace_dir"],
+                max_events=args.max_events, live_hub=live_hub)
     return 0
 
 
@@ -289,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8201)
     p.add_argument("--roots", nargs="*", default=None)
     p.add_argument("--trace-dir", default=None)
+    p.add_argument("--max-events", type=int, default=50_000,
+                   help="요청당 라인이벤트 상한 (대형 앱 보호, 기본 50000)")
     p.add_argument("--live", action="store_true", help="라이브 소스스크린 허브 장착")
 
     p = sub.add_parser("doc", help="산출물")
