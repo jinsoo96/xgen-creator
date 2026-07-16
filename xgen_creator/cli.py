@@ -48,7 +48,7 @@ def _cmd_make(args, config) -> int:
     report = run_make(config, steps=args.steps, base_url=args.base_url,
                       journey_id=args.id, title=args.title, headed=args.headed,
                       narrate=not args.no_narrate, pdf=args.pdf, out_dir=args.out,
-                      goal=args.goal,
+                      goal=args.goal, pre_steps=args.pre_steps,
                       reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
     print("\n=== 산출물 ===")
     for path in report["outputs"] + report["pdfs"]:
@@ -273,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--goal", default=None,
                    help="자연어 목표 — agent 모델이 멀티턴 관측 루프로 브라우저를 몬다"
                         " (보고→행동→다시 보고)")
+    p.add_argument("--pre-steps", default=None,
+                   help="goal 루프 전에 결정론으로 수행할 스텝 JSON (로그인 등 — "
+                        "\"mask\": true 스텝의 값은 증거에도 남기지 않음)")
     p.add_argument("--steps", default=None, help="스텝 정의 JSON (없으면 최신 여정 재사용)")
     p.add_argument("--base-url", default=None)
     p.add_argument("--id", default=None)

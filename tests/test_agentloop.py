@@ -68,6 +68,16 @@ class AgentLoopTest(unittest.TestCase):
         obj = _extract_object('```json\n{"done": true}\n```')
         self.assertTrue(obj["done"])
 
+    def test_initial_goto_false_resumes_session(self):
+        """선행 스텝(로그인 등)이 이미 진입한 세션은 goto 없이 현재 화면부터 관측한다."""
+        agent = ScriptedAgent([json.dumps({"done": True, "reason": "이미 목표 화면"})])
+        session = StubSession()
+        raws, reason = run_goal_loop("g", session, agent, ModelRoles(),
+                                     initial_goto=False, log=lambda m: None)
+        self.assertEqual(session.performed, [], "initial_goto=False면 진입 goto가 없어야 한다")
+        self.assertEqual(raws, [])
+        self.assertEqual(reason, "이미 목표 화면")
+
 
 class SourceWatchTest(unittest.TestCase):
     def test_snapshot_diff_detects_change_and_skips_noise(self):

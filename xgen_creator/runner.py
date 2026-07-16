@@ -40,8 +40,12 @@ def record_goal_journey(config: dict, goal: str, base_url: str | None = None,
                         journey_id: str = "goal", title: str | None = None,
                         headed: bool = False, max_turns: int = 8,
                         reroute: list | None = None, extra_headers: dict | None = None,
+                        pre_steps: str | Path | None = None,
                         log: Callable[[str], None] = print) -> Path:
-    """멀티턴 관측 루프 — agent가 화면 변화를 보며 스텝을 스스로 밟는다."""
+    """멀티턴 관측 루프 — agent가 화면 변화를 보며 스텝을 스스로 밟는다.
+
+    pre_steps: 루프 전에 결정론으로 수행할 스텝 JSON(로그인 등 — 자격은 LLM에 안 보낸다).
+    """
     from .agentloop import run_goal_loop
     from .bridge.driver import BridgeSession
     from .llm import LLMClient
@@ -61,9 +65,20 @@ def record_goal_journey(config: dict, goal: str, base_url: str | None = None,
                        shot_dir=journey_root / "shots", headless=not headed,
                        video_dir=journey_root / "video",
                        reroute=reroute, extra_headers=extra_headers) as session:
-        raws, reason = run_goal_loop(goal, session, client, roles,
-                                     rules_context, max_turns, log)
-    log(f"루프 종료: {reason} · 수행 {len(raws)}스텝")
+        pre_raws: list[dict] = []
+        if pre_steps:
+            for step_def in json.loads(Path(pre_steps).read_text(encoding="utf-8")):
+                mask = step_def.pop("mask", False)
+                raw = session.step(**step_def)
+                if mask:
+                    raw["value"] = "********"  # 자격값은 여정 증거에도 남기지 않는다
+                pre_raws.append(raw)
+                log(f"  선행 {raw['idx']}: {raw['action']} {raw.get('selector') or ''}")
+        loop_raws, reason = run_goal_loop(goal, session, client, roles,
+                                          rules_context, max_turns=max_turns,
+                                          initial_goto=not pre_raws, log=log)
+        raws = pre_raws + loop_raws
+    log(f"루프 종료: {reason} · 수행 {len(raws)}스텝 (선행 {len(pre_raws)})")
 
     journey = Journey(id=journey_id, title=title or goal, base_url=base_url,
                       created=datetime.now(timezone.utc).isoformat(),
@@ -157,7 +172,7 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
              journey_id: str | None = None, title: str | None = None,
              headed: bool = False, narrate: bool = True, pdf: bool = False,
              out_dir: str | None = None, reroute: list | None = None,
-             goal: str | None = None,
+             goal: str | None = None, pre_steps: str | None = None,
              log: Callable[[str], None] = print) -> dict:
     """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}
 
@@ -167,7 +182,8 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
     if goal and not steps:
         journey_path = record_goal_journey(
             config, goal, base_url=base_url, journey_id=journey_id or "goal",
-            title=title, headed=headed, reroute=reroute, log=log)
+            title=title, headed=headed, reroute=reroute,
+            pre_steps=pre_steps, log=log)
         steps = None  # 루프가 여정까지 만들었다 — 아래 최신 여정 탐색을 건너뛰게
         journey = Journey.load(journey_path)
         log(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")

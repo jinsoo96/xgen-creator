@@ -36,19 +36,24 @@ def _extract_object(text: str) -> dict:
 
 def run_goal_loop(goal: str, session, client: LLMClient, roles: ModelRoles,
                   rules_context: str = "", max_turns: int = 8,
+                  initial_goto: bool = True,
                   log: Callable[[str], None] = print) -> tuple[list[dict], str]:
-    """반환: (수행된 raw 스텝들, 종료 사유). 첫 턴은 화면 진입부터 시작한다."""
+    """반환: (수행된 raw 스텝들, 종료 사유).
+
+    initial_goto=False면 이미 진입/로그인된 세션을 이어받아 현재 화면부터 관측한다.
+    """
     system = _SYSTEM + (f"\n\n[산출물 규칙]\n{rules_context}" if rules_context else "")
     raws: list[dict] = []
     history: list[dict] = []
-    raws.append(session.step("goto", "/", note="화면 진입"))
-    history.append({"turn": 0, "action": "goto /", "url": raws[-1].get("url_after")})
+    if initial_goto:
+        raws.append(session.step("goto", "/", note="화면 진입"))
+        history.append({"turn": 0, "action": "goto /", "url": raws[-1].get("url_after")})
 
     for turn in range(1, max_turns + 1):
         outline = session.outline()
         user = json.dumps({
             "목표": goal,
-            "현재_URL": raws[-1].get("url_after"),
+            "현재_URL": raws[-1].get("url_after") if raws else None,
             "화면_요소": outline,
             "수행_이력": history,
         }, ensure_ascii=False)
