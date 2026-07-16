@@ -86,6 +86,38 @@ class BridgeSession:
             except Exception:
                 pass
 
+    # -- 계획용 화면 요약 ----------------------------------------------------
+    def outline(self, url: str | None = None, max_elements: int = 45) -> list[dict]:
+        """상호작용 요소(버튼·링크·입력) 목록 — 계획자에게 넘길 화면 스냅샷."""
+        page = self._page
+        if url is not None:
+            page.goto(url if url.startswith("http") else self.base_url + url)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+        return page.evaluate(
+            """(max) => {
+                const sel = 'button, a[href], input, [role=button], [data-testid]';
+                const out = [];
+                for (const el of document.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) continue;
+                    const testid = el.dataset ? el.dataset.testid : null;
+                    let s = null;
+                    if (testid) s = '[data-testid=' + testid + ']';
+                    else if (el.id) s = '#' + el.id;
+                    else if (el.name) s = el.tagName.toLowerCase() + '[name=' + el.name + ']';
+                    else if (el.type) s = el.tagName.toLowerCase() + '[type=' + el.type + ']';
+                    else continue;
+                    out.push({ tag: el.tagName.toLowerCase(), selector: s,
+                        text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60) || null,
+                        type: el.type || null });
+                    if (out.length >= max) break;
+                }
+                return out;
+            }""", max_elements)
+
     # -- 스텝 ---------------------------------------------------------------
     def step(self, action: str, selector: str | None = None,
              value: str | None = None, note: str = "") -> dict:

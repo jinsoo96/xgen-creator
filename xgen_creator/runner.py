@@ -19,6 +19,45 @@ from .rules.loader import load_rules, compose_context
 FORMS_ALL = ("journey", "screen-spec", "test-report")
 
 
+def plan_steps_for_goal(config: dict, goal: str, base_url: str | None = None,
+                        journey_id: str = "planned",
+                        log: Callable[[str], None] = print) -> Path:
+    """자연어 목표 → agent 모델(Opus)이 화면을 보고 스텝 계획 → 스텝 JSON 경로.
+
+    "AI가 버튼을 누른다"의 계획 단계. LLM/agent 엔드포인트가 없으면 RuntimeError.
+    """
+    from .bridge.driver import BridgeSession
+    from .llm import LLMClient
+    from .plan import plan_steps
+
+    client = LLMClient.from_env(config)
+    if client is None:
+        raise RuntimeError("계획에는 LLM 엔드포인트가 필요하다 (creator.config.json llm_base_url)")
+    base_url = base_url or config.get("base_url")
+    if not base_url:
+        raise RuntimeError("base_url 필요")
+    roles = load_roles(config)
+    rules_context = compose_context(load_rules(config.get("rules_dir", "rules")))
+
+    log(f"화면 관찰 중… ({base_url})")
+    with BridgeSession(base_url, trace_store=config["trace_dir"],
+                       shot_dir=Path(config["journey_dir"]) / journey_id / "plan") as s:
+        outline = s.outline(url="/")
+    log(f"상호작용 요소 {len(outline)}개 관찰 · agent 모델({roles.agent})이 스텝 계획 중…")
+    steps = plan_steps(goal, outline, client, roles, rules_context)
+    if not steps:
+        raise RuntimeError("agent가 유효한 스텝을 계획하지 못했다 (화면/목표 재확인)")
+    if steps[0]["action"] != "goto":  # 실행 세션은 빈 페이지에서 시작 — 진입 스텝을 앞세운다
+        steps.insert(0, {"action": "goto", "selector": "/", "note": "화면 진입"})
+    log(f"계획 완료: {len(steps)}스텝")
+    for i, st in enumerate(steps, 1):
+        log(f"  계획 {i}: {st['action']} {st.get('selector') or st.get('value') or ''}")
+    plan_path = Path(config["journey_dir"]) / f"{journey_id}.plan.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(json.dumps(steps, ensure_ascii=False, indent=1), encoding="utf-8")
+    return plan_path
+
+
 def record_journey(config: dict, steps_path: str | Path,
                    base_url: str | None = None, journey_id: str | None = None,
                    title: str | None = None, headed: bool = False,
@@ -63,8 +102,18 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
              journey_id: str | None = None, title: str | None = None,
              headed: bool = False, narrate: bool = True, pdf: bool = False,
              out_dir: str | None = None, reroute: list | None = None,
+             goal: str | None = None,
              log: Callable[[str], None] = print) -> dict:
-    """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}"""
+    """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}
+
+    goal(자연어)이 주어지면 agent 모델이 스텝을 계획해 steps 로 삼는다("AI가 버튼을 누른다").
+    """
+    if goal and not steps:
+        jid = journey_id or "planned"
+        steps = str(plan_steps_for_goal(config, goal, base_url=base_url,
+                                        journey_id=jid, log=log))
+        journey_id = journey_id or jid
+        title = title or goal
     if steps:
         journey_path = record_journey(config, steps, base_url=base_url,
                                       journey_id=journey_id, title=title,

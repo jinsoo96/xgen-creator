@@ -48,6 +48,7 @@ def _cmd_make(args, config) -> int:
     report = run_make(config, steps=args.steps, base_url=args.base_url,
                       journey_id=args.id, title=args.title, headed=args.headed,
                       narrate=not args.no_narrate, pdf=args.pdf, out_dir=args.out,
+                      goal=args.goal,
                       reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
     print("\n=== 산출물 ===")
     for path in report["outputs"] + report["pdfs"]:
@@ -55,6 +56,31 @@ def _cmd_make(args, config) -> int:
     traced = sum(1 for s in report["steps"] if s["backend"])
     print(f"영상: {report['video'] or '없음'} · 서술: {'포함' if report['narrated'] else '없음'} · "
           f"백엔드 증거 {traced}/{len(report['steps'])}")
+    return 0
+
+
+def _cmd_watch(args, config) -> int:
+    """여정 변경 감지 → 산출물 자동 재생성 (build pipeline 자동화). Ctrl+C로 종료."""
+    import time
+    journey_dir = Path(config["journey_dir"])
+    seen: dict[str, float] = {}
+    print(f"watch: {journey_dir} 감시 중 (interval {args.interval}s, Ctrl+C 종료)")
+    try:
+        while True:
+            changed = []
+            for jp in sorted(journey_dir.glob("*.json")):
+                mtime = jp.stat().st_mtime
+                if seen.get(str(jp)) != mtime:
+                    seen[str(jp)] = mtime
+                    changed.append(jp)
+            for jp in changed:
+                for form in ("journey", "screen-spec", "test-report"):
+                    report = build([jp], args.out or config["out_dir"], form=form)
+                    if report["built"]:
+                        print(f"  재생성 {jp.stem} [{form}]: {len(report['outputs'])}파일")
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nwatch 종료")
     return 0
 
 
@@ -207,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="'url글롭패턴=대상베이스' — 매칭 요청을 사이드카로 션트")
 
     p = sub.add_parser("make", help="원샷: 여정→서술→전 양식→PDF (산출물 만들어줘)")
+    p.add_argument("--goal", default=None,
+                   help="자연어 목표 — agent 모델이 화면 보고 스텝 계획 (AI가 버튼을 누른다)")
     p.add_argument("--steps", default=None, help="스텝 정의 JSON (없으면 최신 여정 재사용)")
     p.add_argument("--base-url", default=None)
     p.add_argument("--id", default=None)
@@ -220,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("web", help="산출물 콘솔 (버튼 하나로 make + 라이브 관측)")
     p.add_argument("--port", type=int, default=8990)
     p.add_argument("--open", action="store_true")
+
+    p = sub.add_parser("watch", help="여정 변경 감지 → 산출물 자동 재생성")
+    p.add_argument("--interval", type=float, default=2.0)
+    p.add_argument("--out", default=None)
 
     p = sub.add_parser("sidecar", help="대상 ASGI 앱을 미들웨어로 감싸 기동")
     p.add_argument("app", help="모듈:앱 (예: main:app)")
@@ -263,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_make(args, config)
     if args.command == "web":
         return _cmd_web(args, config)
+    if args.command == "watch":
+        return _cmd_watch(args, config)
     if args.command == "sidecar":
         return _cmd_sidecar(args, config)
     if args.command == "doc":

@@ -52,6 +52,7 @@ class ConsoleApp:
             try:
                 job.result = self.make_fn(
                     self.config, steps=params.get("steps") or None,
+                    goal=params.get("goal") or None,
                     journey_id=params.get("id") or None,
                     title=params.get("title") or None,
                     narrate=bool(params.get("narrate", True)),
@@ -188,7 +189,7 @@ main { flex:1; display:grid; grid-template-columns:400px 1fr 1fr; grid-template-
 #live      { grid-row:2; grid-column:2; }
 #outputs   { grid-row:2; grid-column:3; }
 label { display:block; font-size:13px; color:#8a97a8; margin:14px 0 6px; }
-select { width:100%; background:#111b2a; color:#d8e2ef; border:1px solid #2b3d55;
+select, input { width:100%; background:#111b2a; color:#d8e2ef; border:1px solid #2b3d55;
          border-radius:8px; padding:10px 12px; font-size:14px; }
 .toggles { display:flex; gap:16px; margin-top:14px; font-size:14px; color:#aebfd4; }
 .toggles input { accent-color:#2b5aa8; margin-right:6px; }
@@ -224,7 +225,9 @@ iframe { width:100%; height:100%; border:0; background:#0a0f16; }
   <div class="panel" id="run-panel">
     <h2>실행</h2>
     <div class="body">
-      <label>여정 소스</label>
+      <label>목표 (자연어 — AI가 화면 보고 스텝 계획)</label>
+      <input id="goal" placeholder="예: 분석 버튼을 눌러 결과를 확인한다" />
+      <label>또는 여정 소스</label>
       <select id="steps"><option value="">최근 여정 재사용 (재렌더)</option></select>
       <div class="toggles">
         <label style="margin:0"><input type="checkbox" id="narrate" checked>LLM 서술</label>
@@ -261,7 +264,8 @@ document.getElementById("go").onclick = async () => {
   document.getElementById("tl-body").innerHTML = '<div class="empty">수행 중…</div>';
   document.getElementById("out-body").innerHTML = '<div class="empty">생성 중…</div>';
   await fetch("/api/run", { method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ steps: sel.value, narrate: document.getElementById("narrate").checked,
+    body: JSON.stringify({ goal: document.getElementById("goal").value, steps: sel.value,
+                           narrate: document.getElementById("narrate").checked,
                            pdf: document.getElementById("pdf").checked }) });
   document.getElementById("go").disabled = true;
   if (!timer) timer = setInterval(poll, 700);
