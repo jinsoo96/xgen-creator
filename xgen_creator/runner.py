@@ -19,6 +19,61 @@ from .rules.loader import load_rules, compose_context
 FORMS_ALL = ("journey", "screen-spec", "test-report")
 
 
+def journey_files(journey_dir: str | Path) -> list[Path]:
+    """여정 JSON만 — 계획 파일(*.plan.json) 등 비여정 JSON은 제외."""
+    return [p for p in sorted(Path(journey_dir).glob("*.json"))
+            if not p.name.endswith(".plan.json")]
+
+
+def _finalize_steps(config: dict, raws: list[dict]) -> list[Step]:
+    steps = []
+    for raw in raws:
+        if raw.get("element"):
+            raw["frontend_sources"] = resolve_element(
+                raw["element"], config.get("frontend_roots") or [])
+        steps.append(Step(**{k: v for k, v in raw.items()
+                             if k in Step.__dataclass_fields__}))
+    return steps
+
+
+def record_goal_journey(config: dict, goal: str, base_url: str | None = None,
+                        journey_id: str = "goal", title: str | None = None,
+                        headed: bool = False, max_turns: int = 8,
+                        reroute: list | None = None, extra_headers: dict | None = None,
+                        log: Callable[[str], None] = print) -> Path:
+    """멀티턴 관측 루프 — agent가 화면 변화를 보며 스텝을 스스로 밟는다."""
+    from .agentloop import run_goal_loop
+    from .bridge.driver import BridgeSession
+    from .llm import LLMClient
+
+    client = LLMClient.from_env(config)
+    if client is None:
+        raise RuntimeError("goal 수행에는 LLM 엔드포인트가 필요하다 (llm_base_url)")
+    base_url = base_url or config.get("base_url")
+    if not base_url:
+        raise RuntimeError("base_url 필요")
+    roles = load_roles(config)
+    rules_context = compose_context(load_rules(config.get("rules_dir", "rules")))
+    journey_root = Path(config["journey_dir"]) / journey_id
+
+    log(f"관측 루프 시작: \"{goal}\" (agent: {roles.agent}, 최대 {max_turns}턴)")
+    with BridgeSession(base_url, trace_store=config["trace_dir"],
+                       shot_dir=journey_root / "shots", headless=not headed,
+                       video_dir=journey_root / "video",
+                       reroute=reroute, extra_headers=extra_headers) as session:
+        raws, reason = run_goal_loop(goal, session, client, roles,
+                                     rules_context, max_turns, log)
+    log(f"루프 종료: {reason} · 수행 {len(raws)}스텝")
+
+    journey = Journey(id=journey_id, title=title or goal, base_url=base_url,
+                      created=datetime.now(timezone.utc).isoformat(),
+                      video=session.video_path,
+                      steps=_finalize_steps(config, raws))
+    out = journey.save(Path(config["journey_dir"]) / f"{journey_id}.json")
+    log(f"여정 저장: {out}")
+    return out
+
+
 def plan_steps_for_goal(config: dict, goal: str, base_url: str | None = None,
                         journey_id: str = "planned",
                         log: Callable[[str], None] = print) -> Path:
@@ -106,27 +161,35 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
              log: Callable[[str], None] = print) -> dict:
     """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}
 
-    goal(자연어)이 주어지면 agent 모델이 스텝을 계획해 steps 로 삼는다("AI가 버튼을 누른다").
+    goal(자연어)이 주어지면 agent 모델이 멀티턴 관측 루프로 직접 브라우저를 몬다
+    ("AI가 버튼을 누른다" — 보고→행동→다시 보고).
     """
     if goal and not steps:
-        jid = journey_id or "planned"
-        steps = str(plan_steps_for_goal(config, goal, base_url=base_url,
-                                        journey_id=jid, log=log))
-        journey_id = journey_id or jid
-        title = title or goal
+        journey_path = record_goal_journey(
+            config, goal, base_url=base_url, journey_id=journey_id or "goal",
+            title=title, headed=headed, reroute=reroute, log=log)
+        steps = None  # 루프가 여정까지 만들었다 — 아래 최신 여정 탐색을 건너뛰게
+        journey = Journey.load(journey_path)
+        log(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
+        return _postprocess(config, journey_path, journey, narrate, pdf, out_dir, log)
     if steps:
         journey_path = record_journey(config, steps, base_url=base_url,
                                       journey_id=journey_id, title=title,
                                       headed=headed, reroute=reroute, log=log)
     else:
-        candidates = sorted(Path(config["journey_dir"]).glob("*.json"),
+        candidates = sorted(journey_files(config["journey_dir"]),
                             key=lambda p: p.stat().st_mtime, reverse=True)
         if not candidates:
             raise RuntimeError("여정이 없다 — 스텝 정의로 기록부터")
         journey_path = candidates[0]
     journey = Journey.load(journey_path)
     log(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
+    return _postprocess(config, journey_path, journey, narrate, pdf, out_dir, log)
 
+
+def _postprocess(config: dict, journey_path: Path, journey: Journey,
+                 narrate: bool, pdf: bool, out_dir: str | None,
+                 log: Callable[[str], None]) -> dict:
     narrated = False
     if narrate:
         from .llm import LLMClient

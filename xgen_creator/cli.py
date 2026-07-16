@@ -60,27 +60,63 @@ def _cmd_make(args, config) -> int:
 
 
 def _cmd_watch(args, config) -> int:
-    """여정 변경 감지 → 산출물 자동 재생성 (build pipeline 자동화). Ctrl+C로 종료."""
+    """자동 재생성 파이프라인. 여정 변경 → 재렌더. --sources면 소스 변경 → 여정
+    재수집(make)까지. Ctrl+C로 종료."""
     import time
+    from .pipeline.watch import snapshot, changed_files
     journey_dir = Path(config["journey_dir"])
     seen: dict[str, float] = {}
-    print(f"watch: {journey_dir} 감시 중 (interval {args.interval}s, Ctrl+C 종료)")
+    source_roots = ((config.get("backend_roots") or [])
+                    + (config.get("frontend_roots") or [])) if args.sources else []
+    src_snapshot = snapshot(source_roots) if source_roots else {}
+    print(f"watch: 여정={journey_dir}"
+          + (f" · 소스 {len(src_snapshot)}파일 감시" if source_roots else "")
+          + f" (interval {args.interval}s, Ctrl+C 종료)", flush=True)
     try:
         while True:
+            if source_roots:
+                current = snapshot(source_roots)
+                diffs = changed_files(src_snapshot, current)
+                if diffs:
+                    src_snapshot = current
+                    print(f"소스 변경 {len(diffs)}건 감지 (예: {Path(diffs[0]).name}) "
+                          f"→ 여정 재수집", flush=True)
+                    from .runner import run_make
+                    try:
+                        run_make(config, steps=args.steps, goal=args.goal,
+                                 narrate=False, pdf=args.pdf)
+                    except Exception as exc:
+                        print(f"  재수집 실패: {exc}")
+            from .runner import journey_files
             changed = []
-            for jp in sorted(journey_dir.glob("*.json")):
+            for jp in journey_files(journey_dir):
                 mtime = jp.stat().st_mtime
                 if seen.get(str(jp)) != mtime:
                     seen[str(jp)] = mtime
                     changed.append(jp)
             for jp in changed:
-                for form in ("journey", "screen-spec", "test-report"):
-                    report = build([jp], args.out or config["out_dir"], form=form)
-                    if report["built"]:
-                        print(f"  재생성 {jp.stem} [{form}]: {len(report['outputs'])}파일")
+                try:
+                    for form in ("journey", "screen-spec", "test-report"):
+                        report = build([jp], args.out or config["out_dir"], form=form)
+                        if report["built"]:
+                            print(f"  재생성 {jp.stem} [{form}]: "
+                                  f"{len(report['outputs'])}파일", flush=True)
+                except Exception as exc:  # 파일 하나가 감시 전체를 죽이면 안 된다
+                    print(f"  재생성 실패 {jp.name}: {exc}")
+            if changed:
+                from .docgen.index_page import build_index
+                build_index(args.out or config["out_dir"])
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\nwatch 종료")
+    return 0
+
+
+def _cmd_export(args, config) -> int:
+    """docs_out 인덱스 생성 — 게이트웨이(모노레포 프론트 등)가 그대로 서빙할 진입점."""
+    from .docgen.index_page import build_index
+    index = build_index(args.out or config["out_dir"])
+    print(f"인덱스 생성: {index}")
     return 0
 
 
@@ -112,9 +148,10 @@ def _cmd_sidecar(args, config) -> int:
 
 
 def _cmd_doc_build(args, config) -> int:
+    from .runner import journey_files
     paths = [Path(p) for p in args.journey]
     if not paths:
-        paths = sorted(Path(config["journey_dir"]).glob("*.json"))
+        paths = journey_files(config["journey_dir"])
     if not paths:
         print("여정 JSON이 없다 — 먼저 `creator record`", file=sys.stderr)
         return 2
@@ -234,7 +271,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("make", help="원샷: 여정→서술→전 양식→PDF (산출물 만들어줘)")
     p.add_argument("--goal", default=None,
-                   help="자연어 목표 — agent 모델이 화면 보고 스텝 계획 (AI가 버튼을 누른다)")
+                   help="자연어 목표 — agent 모델이 멀티턴 관측 루프로 브라우저를 몬다"
+                        " (보고→행동→다시 보고)")
     p.add_argument("--steps", default=None, help="스텝 정의 JSON (없으면 최신 여정 재사용)")
     p.add_argument("--base-url", default=None)
     p.add_argument("--id", default=None)
@@ -249,8 +287,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8990)
     p.add_argument("--open", action="store_true")
 
-    p = sub.add_parser("watch", help="여정 변경 감지 → 산출물 자동 재생성")
+    p = sub.add_parser("watch", help="자동 재생성 (여정 변경→재렌더, --sources면 소스→재수집)")
     p.add_argument("--interval", type=float, default=2.0)
+    p.add_argument("--out", default=None)
+    p.add_argument("--sources", action="store_true",
+                   help="backend/frontend_roots 소스 변경 시 여정 재수집(make)")
+    p.add_argument("--steps", default=None, help="재수집에 쓸 스텝 정의")
+    p.add_argument("--goal", default=None, help="재수집에 쓸 자연어 목표")
+    p.add_argument("--pdf", action="store_true")
+
+    p = sub.add_parser("export", help="docs_out 인덱스 생성 (게이트웨이 진입점)")
     p.add_argument("--out", default=None)
 
     p = sub.add_parser("sidecar", help="대상 ASGI 앱을 미들웨어로 감싸 기동")
@@ -297,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_web(args, config)
     if args.command == "watch":
         return _cmd_watch(args, config)
+    if args.command == "export":
+        return _cmd_export(args, config)
     if args.command == "sidecar":
         return _cmd_sidecar(args, config)
     if args.command == "doc":

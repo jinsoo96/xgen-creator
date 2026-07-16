@@ -1,9 +1,11 @@
 """라인 트레이서 — UI 액션이 유발한 Python 실행을 "돌아간 만큼" 라인 단위로 건진다.
 
-sys.settrace 기반(P0). 대상 루트(roots) 안의 코드만 후킹하고 그 외(표준 라이브러리,
-site-packages)는 call 시점에 배제해 오버헤드를 억제한다. on_event 콜백으로
-라이브 스트리밍(SSE 등)에 연결할 수 있다. 스레드 단위 도구이므로 asyncio 핸들러는
-이벤트루프 스레드에서 그대로 잡히고, 새 스레드는 threading.settrace로 함께 장착된다.
+백엔드 2종(인터페이스 동일):
+- **monitoring** (기본, py3.12+): sys.monitoring(PEP 669). 스코프 밖 코드 위치는
+  DISABLE로 영구 배제돼 대형 실앱에서도 오버헤드가 낮다.
+- **settrace** (폴백/구버전): sys.settrace. 스코프 밖은 call 시점에 배제.
+
+on_event 콜백으로 라이브 스트리밍(SSE 등)에 연결할 수 있다.
 """
 from __future__ import annotations
 
@@ -65,16 +67,24 @@ class LineTracer:
         on_event: Optional[Callable[[TraceEvent], None]] = None,
         max_events: int = 200_000,
         record_calls: bool = False,
+        backend: str = "auto",  # auto | monitoring | settrace
     ) -> None:
         self.roots = [os.path.normcase(os.path.abspath(r)) for r in roots if r]
         self.on_event = on_event
         self.max_events = max_events
         self.record_calls = record_calls
+        monitoring_ok = hasattr(sys, "monitoring")
+        if backend == "auto":
+            backend = "monitoring" if monitoring_ok else "settrace"
+        if backend == "monitoring" and not monitoring_ok:
+            backend = "settrace"
+        self.backend = backend
         self.result = TraceResult()
         self._scope_cache: dict[str, str | None] = {}
         self._depth = 0
         self._active = False
         self._prev_trace = None
+        self._tool_id: int | None = None
 
     # -- 스코프 판정 ---------------------------------------------------------
     def _scoped(self, filename: str) -> str | None:
@@ -134,17 +144,82 @@ class LineTracer:
             self._depth = max(0, self._depth - 1)
         return self._local_trace
 
+    # -- sys.monitoring 백엔드 (PEP 669) --------------------------------------
+    def _mon_line(self, code, line):
+        mon = sys.monitoring
+        if not self._active:
+            return mon.DISABLE
+        path = self._scoped(code.co_filename)
+        if path is None:
+            return mon.DISABLE  # 스코프 밖 위치는 영구 배제 — 저오버헤드의 핵심
+        self._record(TraceEvent(path, line, code.co_name, self._depth, "line"))
+        return None
+
+    def _mon_start(self, code, offset):
+        mon = sys.monitoring
+        if not self._active:
+            return mon.DISABLE
+        path = self._scoped(code.co_filename)
+        if path is None:
+            return mon.DISABLE
+        self._depth += 1
+        if self.record_calls:
+            self._record(TraceEvent(path, code.co_firstlineno, code.co_name,
+                                    self._depth, "call"))
+        return None
+
+    def _mon_return(self, code, offset, retval):
+        if self._scoped(code.co_filename) is not None:
+            if self.record_calls:
+                self._record(TraceEvent(code.co_filename, code.co_firstlineno,
+                                        code.co_name, self._depth, "return"))
+            self._depth = max(0, self._depth - 1)
+        return None
+
+    def _start_monitoring(self) -> bool:
+        mon = sys.monitoring
+        for candidate in range(6):
+            try:
+                mon.use_tool_id(candidate, "xgen-creator")
+                self._tool_id = candidate
+                break
+            except ValueError:
+                continue
+        if self._tool_id is None:
+            return False  # 도구 슬롯 소진 — settrace 폴백
+        events = mon.events.LINE | mon.events.PY_START | mon.events.PY_RETURN
+        mon.register_callback(self._tool_id, mon.events.LINE, self._mon_line)
+        mon.register_callback(self._tool_id, mon.events.PY_START, self._mon_start)
+        mon.register_callback(self._tool_id, mon.events.PY_RETURN, self._mon_return)
+        mon.set_events(self._tool_id, events)
+        mon.restart_events()  # 이전 세션의 DISABLE 잔재 해제
+        return True
+
+    def _stop_monitoring(self) -> None:
+        mon = sys.monitoring
+        mon.set_events(self._tool_id, 0)
+        for event in (mon.events.LINE, mon.events.PY_START, mon.events.PY_RETURN):
+            mon.register_callback(self._tool_id, event, None)
+        mon.free_tool_id(self._tool_id)
+        self._tool_id = None
+
     # -- 수명 ---------------------------------------------------------------
     def start(self) -> None:
         self._active = True
+        if self.backend == "monitoring" and self._start_monitoring():
+            return
+        self.backend = "settrace"
         self._prev_trace = sys.gettrace()
         threading.settrace(self._global_trace)
         sys.settrace(self._global_trace)
 
     def stop(self) -> TraceResult:
         self._active = False
-        sys.settrace(self._prev_trace)
-        threading.settrace(self._prev_trace)  # None이면 해제
+        if self._tool_id is not None:
+            self._stop_monitoring()
+        else:
+            sys.settrace(self._prev_trace)
+            threading.settrace(self._prev_trace)  # None이면 해제
         return self.result
 
     def __enter__(self) -> "LineTracer":

@@ -7,11 +7,14 @@ import fixture_target
 from xgen_creator.trace import LineTracer, build_slices, render_slices_text
 
 TESTS_DIR = str(Path(__file__).parent)
+FIXTURE_FILE = str(Path(fixture_target.__file__))
 
 
 class TracerTest(unittest.TestCase):
     def _trace(self, fn, *args, **tracer_kw):
-        tracer = LineTracer([TESTS_DIR], **tracer_kw)
+        # 스코프를 fixture 파일로 한정 — monitoring 백엔드는 실행 중 프레임(테스트
+        # 자신)도 잡으므로 디렉토리 스코프면 테스트 파일 라인이 섞인다
+        tracer = LineTracer([FIXTURE_FILE], **tracer_kw)
         tracer.start()
         try:
             fn(*args)
@@ -65,6 +68,23 @@ class TracerTest(unittest.TestCase):
         fixture_target.helper(2)
         tracer.stop()
         self.assertEqual(len(seen), len(tracer.result.events))
+
+    def test_monitoring_backend_parity(self):
+        import sys
+        if not hasattr(sys, "monitoring"):
+            self.skipTest("py3.12+ 아님")
+        by_backend = {}
+        for backend in ("settrace", "monitoring"):
+            tracer = LineTracer([TESTS_DIR], backend=backend)
+            tracer.start()
+            fixture_target.helper(3)
+            result = tracer.stop()
+            self.assertEqual(tracer.backend, backend)
+            files = result.executed_lines()
+            target = [f for f in files if f.endswith("fixture_target.py")]
+            by_backend[backend] = set(files[target[0]])
+        self.assertEqual(by_backend["settrace"], by_backend["monitoring"],
+                         "두 백엔드의 실행 라인 집합은 동일해야 한다")
 
     def test_slices_render(self):
         result = self._trace(fixture_target.helper, 3)
