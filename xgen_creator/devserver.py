@@ -1,4 +1,4 @@
-"""데모/로컬 검증용 초미니 ASGI 서버 — 외부 의존성 0. 프로덕션 용도 아님."""
+"""초미니 ASGI 서버 — 콘솔/데모/로컬 관측용, 의존성 0. 프로덕션 용도 아님."""
 from __future__ import annotations
 
 import asyncio
@@ -61,7 +61,7 @@ def serve(app, port: int, host: str = "127.0.0.1") -> None:
     async def main():
         server = await asyncio.start_server(
             lambda r, w: _handle(r, w, app), host, port)
-        print(f"mini-asgi: http://{host}:{port}", flush=True)
+        print(f"xgen-creator devserver: http://{host}:{port}", flush=True)
         async with server:
             await server.serve_forever()
 

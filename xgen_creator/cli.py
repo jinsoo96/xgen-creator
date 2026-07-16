@@ -5,13 +5,11 @@ import argparse
 import json
 import runpy
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
 from .config import load_config
 from .link.routes_nextjs import scan_routes
-from .link.element import resolve_element
 from .pipeline.build import build
 from .pipeline.roles import load_roles
 from .rules.loader import load_rules, compose_context
@@ -36,105 +34,40 @@ def _cmd_trace_run(args, config) -> int:
     return 0
 
 
-def _record_journey(config, steps_path: str, base_url: str | None = None,
-                    journey_id: str | None = None, title: str | None = None,
-                    headed: bool = False, video: bool = False,
-                    reroute: list | None = None) -> Path:
-    """스텝 정의 JSON을 브리지로 실행해 여정 JSON 경로를 반환. (playwright 필요)"""
-    from .bridge.driver import BridgeSession  # optional 의존 — 지연 임포트
-    from .docgen.model import Journey, Step
-
-    steps_def = json.loads(Path(steps_path).read_text(encoding="utf-8"))
-    base_url = base_url or config.get("base_url")
-    if not base_url:
-        raise SystemExit("base_url 필요 (--base-url 또는 creator.config.json)")
-    journey_id = journey_id or Path(steps_path).stem
-    journey_root = Path(config["journey_dir"]) / journey_id
-
-    steps = []
-    with BridgeSession(base_url, trace_store=config["trace_dir"],
-                       shot_dir=journey_root / "shots", headless=not headed,
-                       video_dir=(journey_root / "video") if video else None,
-                       reroute=reroute) as session:
-        for step_def in steps_def:
-            raw = session.step(**step_def)
-            if raw.get("element"):
-                raw["frontend_sources"] = resolve_element(
-                    raw["element"], config.get("frontend_roots") or [])
-            steps.append(Step(**{k: v for k, v in raw.items()
-                                 if k in Step.__dataclass_fields__}))
-            print(f"  스텝 {raw['idx']}: {raw['action']} {raw.get('selector') or ''} "
-                  f"→ 백엔드 트레이스 {'확보' if raw.get('backend') else '없음'}")
-
-    journey = Journey(id=journey_id, title=title or journey_id, base_url=base_url,
-                      created=datetime.now(timezone.utc).isoformat(),
-                      video=session.video_path, steps=steps)
-    out = journey.save(Path(config["journey_dir"]) / f"{journey_id}.json")
-    print(f"여정 저장: {out}")
-    return out
-
-
 def _cmd_record(args, config) -> int:
-    _record_journey(config, args.steps, base_url=args.base_url, journey_id=args.id,
-                    title=args.title, headed=args.headed, video=args.video,
-                    reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
+    from .runner import record_journey
+    record_journey(config, args.steps, base_url=args.base_url, journey_id=args.id,
+                   title=args.title, headed=args.headed, video=args.video,
+                   reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
     return 0
 
 
 def _cmd_make(args, config) -> int:
-    """"산출물 만들어줘" 원샷 — 여정 확보 → (서술) → 전 양식 → (PDF)."""
-    from .docgen.model import Journey
-
-    if args.steps:
-        journey_path = _record_journey(
-            config, args.steps, base_url=args.base_url, journey_id=args.id,
-            title=args.title, headed=args.headed, video=True,
-            reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
-    else:
-        candidates = sorted(Path(config["journey_dir"]).glob("*.json"),
-                            key=lambda p: p.stat().st_mtime, reverse=True)
-        if not candidates:
-            print("여정이 없다 — --steps <정의.json> 으로 기록부터", file=sys.stderr)
-            return 2
-        journey_path = candidates[0]
-    journey = Journey.load(journey_path)
-    print(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
-
-    narrated = False
-    if not args.no_narrate:
-        from .llm import LLMClient
-        client = LLMClient.from_env(config)
-        if client is None:
-            print("서술 생략 — LLM 엔드포인트 미설정 (XGEN_CREATOR_LLM_BASE_URL)")
-        else:
-            from .docgen.narrate import narrate_journey
-            rules_context = compose_context(load_rules(config.get("rules_dir", "rules")))
-            roles = load_roles(config)
-            print(f"서술 중… (source 모델: {roles.source})")
-            narrate_journey(journey, client, roles, rules_context)
-            journey.save(journey_path)
-            narrated = journey.narrative is not None
-            if not narrated:
-                print("서술 실패 — LLM 미응답/오류. 증거 문서는 서술 없이 그대로 생성한다.")
-
-    out_dir = args.out or config["out_dir"]
-    outputs: list[str] = []
-    for form in ("journey", "screen-spec", "test-report"):
-        report = build([journey_path], out_dir, form=form, force=True)
-        outputs += report["outputs"]
-
-    pdfs: list[str] = []
-    if args.pdf:
-        from .docgen.pdf import html_to_pdf
-        for path in outputs:
-            if path.endswith(".html"):
-                pdfs.append(str(html_to_pdf(path)))
-
+    """"산출물 만들어줘" 원샷 — 러너 호출 (웹 콘솔과 동일 구현)."""
+    from .runner import run_make
+    report = run_make(config, steps=args.steps, base_url=args.base_url,
+                      journey_id=args.id, title=args.title, headed=args.headed,
+                      narrate=not args.no_narrate, pdf=args.pdf, out_dir=args.out,
+                      reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
     print("\n=== 산출물 ===")
-    for path in outputs + pdfs:
+    for path in report["outputs"] + report["pdfs"]:
         print(f"  {path}")
-    print(f"영상: {journey.video or '없음'} · 서술: {'포함' if narrated else '없음'} · "
-          f"백엔드 증거 {sum(1 for s in journey.steps if s.backend)}/{len(journey.steps)}")
+    traced = sum(1 for s in report["steps"] if s["backend"])
+    print(f"영상: {report['video'] or '없음'} · 서술: {'포함' if report['narrated'] else '없음'} · "
+          f"백엔드 증거 {traced}/{len(report['steps'])}")
+    return 0
+
+
+def _cmd_web(args, config) -> int:
+    """산출물 콘솔 — "산출물 만들어줘" 버튼·실행 로그·라이브 소스 스크린·산출물 한 화면."""
+    from .devserver import serve
+    from .web import ConsoleApp
+    if args.open:
+        import threading
+        import webbrowser
+        threading.Timer(1.2, webbrowser.open,
+                        [f"http://127.0.0.1:{args.port}/"]).start()
+    serve(ConsoleApp(config), args.port)
     return 0
 
 
@@ -284,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-narrate", action="store_true", help="LLM 서술 생략")
     p.add_argument("--pdf", action="store_true", help="html 산출물을 PDF로도 출력")
 
+    p = sub.add_parser("web", help="산출물 콘솔 (버튼 하나로 make + 라이브 관측)")
+    p.add_argument("--port", type=int, default=8990)
+    p.add_argument("--open", action="store_true")
+
     p = sub.add_parser("sidecar", help="대상 ASGI 앱을 미들웨어로 감싸 기동")
     p.add_argument("app", help="모듈:앱 (예: main:app)")
     p.add_argument("--dir", required=True, help="대상 앱 루트 디렉토리")
@@ -324,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_record(args, config)
     if args.command == "make":
         return _cmd_make(args, config)
+    if args.command == "web":
+        return _cmd_web(args, config)
     if args.command == "sidecar":
         return _cmd_sidecar(args, config)
     if args.command == "doc":

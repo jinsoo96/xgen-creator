@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from xgen_creator.trace import CreatorTraceMiddleware
 from xgen_creator.live import LiveHub, sse_endpoint, VIEWER_HTML, VIEWER_PATH, EVENTS_PATH
-from _mini_asgi import serve
+from xgen_creator.devserver import serve
 
 
 # --- 데모 비즈니스 로직 (트레이스 대상) --------------------------------------

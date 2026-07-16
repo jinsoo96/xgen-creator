@@ -1,0 +1,124 @@
+"""make 러너 — "산출물 만들어줘" 파이프라인의 단일 구현 (CLI와 웹 콘솔이 공유).
+
+여정 확보(기존 재사용 또는 신규 기록) → LLM 서술(선택) → 전 양식 → PDF(선택).
+log 콜백으로 진행 로그를 어느 표면(터미널·웹)으로든 흘린다.
+"""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable
+
+from .docgen.model import Journey, Step
+from .link.element import resolve_element
+from .pipeline.build import build
+from .pipeline.roles import load_roles
+from .rules.loader import load_rules, compose_context
+
+FORMS_ALL = ("journey", "screen-spec", "test-report")
+
+
+def record_journey(config: dict, steps_path: str | Path,
+                   base_url: str | None = None, journey_id: str | None = None,
+                   title: str | None = None, headed: bool = False,
+                   video: bool = True, reroute: list | None = None,
+                   extra_headers: dict | None = None,
+                   log: Callable[[str], None] = print) -> Path:
+    """스텝 정의 JSON을 브리지로 실행해 여정 JSON 경로를 반환. (playwright 필요)"""
+    from .bridge.driver import BridgeSession  # optional 의존 — 지연 임포트
+
+    steps_def = json.loads(Path(steps_path).read_text(encoding="utf-8"))
+    base_url = base_url or config.get("base_url")
+    if not base_url:
+        raise RuntimeError("base_url 필요 (creator.config.json 또는 --base-url)")
+    journey_id = journey_id or Path(steps_path).stem
+    journey_root = Path(config["journey_dir"]) / journey_id
+
+    log(f"여정 기록 시작: {journey_id} → {base_url}")
+    steps = []
+    with BridgeSession(base_url, trace_store=config["trace_dir"],
+                       shot_dir=journey_root / "shots", headless=not headed,
+                       video_dir=(journey_root / "video") if video else None,
+                       reroute=reroute, extra_headers=extra_headers) as session:
+        for step_def in steps_def:
+            raw = session.step(**step_def)
+            if raw.get("element"):
+                raw["frontend_sources"] = resolve_element(
+                    raw["element"], config.get("frontend_roots") or [])
+            steps.append(Step(**{k: v for k, v in raw.items()
+                                 if k in Step.__dataclass_fields__}))
+            log(f"  스텝 {raw['idx']}: {raw['action']} {raw.get('selector') or ''} "
+                f"→ 백엔드 트레이스 {'확보' if raw.get('backend') else '없음'}")
+
+    journey = Journey(id=journey_id, title=title or journey_id, base_url=base_url,
+                      created=datetime.now(timezone.utc).isoformat(),
+                      video=session.video_path, steps=steps)
+    out = journey.save(Path(config["journey_dir"]) / f"{journey_id}.json")
+    log(f"여정 저장: {out}")
+    return out
+
+
+def run_make(config: dict, steps: str | None = None, base_url: str | None = None,
+             journey_id: str | None = None, title: str | None = None,
+             headed: bool = False, narrate: bool = True, pdf: bool = False,
+             out_dir: str | None = None, reroute: list | None = None,
+             log: Callable[[str], None] = print) -> dict:
+    """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}"""
+    if steps:
+        journey_path = record_journey(config, steps, base_url=base_url,
+                                      journey_id=journey_id, title=title,
+                                      headed=headed, reroute=reroute, log=log)
+    else:
+        candidates = sorted(Path(config["journey_dir"]).glob("*.json"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            raise RuntimeError("여정이 없다 — 스텝 정의로 기록부터")
+        journey_path = candidates[0]
+    journey = Journey.load(journey_path)
+    log(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
+
+    narrated = False
+    if narrate:
+        from .llm import LLMClient
+        client = LLMClient.from_env(config)
+        if client is None:
+            log("서술 생략 — LLM 엔드포인트 미설정")
+        else:
+            from .docgen.narrate import narrate_journey
+            roles = load_roles(config)
+            log(f"서술 중… (source 모델: {roles.source})")
+            rules_context = compose_context(load_rules(config.get("rules_dir", "rules")))
+            narrate_journey(journey, client, roles, rules_context)
+            journey.save(journey_path)
+            narrated = journey.narrative is not None
+            log("서술 완료" if narrated else "서술 실패 — LLM 미응답/오류 (증거 문서는 그대로 생성)")
+
+    outputs: list[str] = []
+    resolved_out = out_dir or config["out_dir"]
+    for form in FORMS_ALL:
+        report = build([journey_path], resolved_out, form=form, force=True)
+        outputs += report["outputs"]
+        log(f"양식 {form}: {len(report['outputs'])}파일")
+
+    pdfs: list[str] = []
+    if pdf:
+        from .docgen.pdf import html_to_pdf
+        for path in outputs:
+            if path.endswith(".html"):
+                pdfs.append(str(html_to_pdf(path)))
+        log(f"PDF {len(pdfs)}종 생성")
+
+    log("완료")
+    return {
+        "journey_id": journey.id,
+        "journey_path": str(journey_path),
+        "outputs": outputs,
+        "pdfs": pdfs,
+        "video": journey.video,
+        "narrated": narrated,
+        "steps": [{"idx": s.idx, "action": s.action, "selector": s.selector,
+                   "note": s.note, "backend": bool(s.backend),
+                   "screenshot": s.screenshot,
+                   "url_after": s.url_after} for s in journey.steps],
+    }
