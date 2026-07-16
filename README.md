@@ -141,6 +141,7 @@ creator roles                              # 모델 역할 (agent / source)
 | **게이트웨이** | `creator export`가 산출물 인덱스(self-contained)를 만든다. 모노레포 프론트 통합 템플릿 = `integrations/xgen-frontend/` |
 | **Rule 컨텍스트** | `rules/*.md` = 산출물 규칙(용어·톤·규격). LLM 서술 단계에 자동 주입 |
 | **라이브 소스 스크린** | 트레이서 이벤트를 SSE로 스트리밍 — 화면 옆에서 "지금 도는 소스 라인"이 흐른다 |
+| **디버거 리플레이** | 캡처된 실행 흐름을 IDE 디버거처럼 line-by-line 스텝 재생 — 현재 라인 하이라이트 + 콜스택 재구성 (`creator debug`) |
 
 ## 경계 (설계 원칙)
 

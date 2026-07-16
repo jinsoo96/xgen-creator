@@ -167,6 +167,8 @@ def _test_report_md(journey: Journey) -> str:
                 f" ({s.backend.get('duration_ms')}ms)", ""]
         if s.narrative:
             out += [s.narrative, ""]
+        out += [f"> 디버거 리플레이(line-by-line 스텝 실행): [debug/step-{s.idx:02d}.html]"
+                f"(debug/step-{s.idx:02d}.html)", ""]
         out += ["```", _slice_block(s.backend), "```", ""]
     if not appended:
         out += [f"({NO_EVIDENCE} — 백엔드 트레이스가 캡처된 스텝이 없다)", ""]

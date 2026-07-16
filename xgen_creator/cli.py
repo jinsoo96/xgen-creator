@@ -112,6 +112,38 @@ def _cmd_watch(args, config) -> int:
     return 0
 
 
+def _cmd_debug(args, config) -> int:
+    """트레이스 ID → 디버거 리플레이 HTML (line-by-line 열람). --open이면 브라우저로."""
+    from .trace.store import TraceStore
+    from .docgen.debug_view import build_debug_view
+    store = TraceStore(config["trace_dir"])
+    trace_id = args.trace_id
+    if trace_id is None:  # 없으면 가장 최근 트레이스
+        ids = store.list_ids()
+        if not ids:
+            print("트레이스가 없다 — 먼저 make/record/sidecar로 수집", file=sys.stderr)
+            return 2
+        newest = max(ids, key=lambda t: (store.root / f"{t}.json").stat().st_mtime)
+        trace_id = newest
+        print(f"최근 트레이스: {trace_id}")
+    payload = store.load(trace_id)
+    if payload is None:
+        print(f"트레이스 없음: {trace_id}", file=sys.stderr)
+        return 2
+    if not payload.get("flow"):
+        print(f"실행 흐름 없음(백엔드 미트레이스): {trace_id}", file=sys.stderr)
+        return 2
+    out = Path(args.out or (Path(config["out_dir"]) / "debug" / f"{trace_id}.html"))
+    build_debug_view(payload, out)
+    print(f"디버거 리플레이: {out}")
+    print(f"  {payload.get('method')} {payload.get('path')} → {payload.get('status')} · "
+          f"{payload.get('event_count')} 라인이벤트 · {payload.get('file_count')} 파일")
+    if args.open:
+        import webbrowser
+        webbrowser.open(out.resolve().as_uri())
+    return 0
+
+
 def _cmd_export(args, config) -> int:
     """docs_out 인덱스 생성 — 게이트웨이(모노레포 프론트 등)가 그대로 서빙할 진입점."""
     from .docgen.index_page import build_index
@@ -299,6 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--goal", default=None, help="재수집에 쓸 자연어 목표")
     p.add_argument("--pdf", action="store_true")
 
+    p = sub.add_parser("debug", help="트레이스 → 디버거 리플레이 (line-by-line 열람)")
+    p.add_argument("trace_id", nargs="?", default=None, help="트레이스 ID (없으면 최근)")
+    p.add_argument("--out", default=None)
+    p.add_argument("--open", action="store_true")
+
     p = sub.add_parser("export", help="docs_out 인덱스 생성 (게이트웨이 진입점)")
     p.add_argument("--out", default=None)
 
@@ -346,6 +383,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_web(args, config)
     if args.command == "watch":
         return _cmd_watch(args, config)
+    if args.command == "debug":
+        return _cmd_debug(args, config)
     if args.command == "export":
         return _cmd_export(args, config)
     if args.command == "sidecar":

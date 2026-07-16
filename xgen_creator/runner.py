@@ -229,6 +229,24 @@ def _postprocess(config: dict, journey_path: Path, journey: Journey,
         outputs += report["outputs"]
         log(f"양식 {form}: {len(report['outputs'])}파일")
 
+    # 디버거 리플레이 — 백엔드 트레이스가 있는 스텝마다 line-by-line 열람 HTML
+    from .trace.store import TraceStore
+    from .docgen.debug_view import build_debug_view
+    store = TraceStore(config["trace_dir"])
+    debug_dir = Path(resolved_out) / journey.id / "debug"
+    debug_views: list[str] = []
+    for step in journey.steps:
+        if not step.backend or not step.trace_id:
+            continue
+        payload = store.load(step.trace_id)
+        if not payload or not payload.get("flow"):
+            continue
+        view = build_debug_view(payload, debug_dir / f"step-{step.idx:02d}.html",
+                                title=f"스텝 {step.idx} — {payload.get('method')} {payload.get('path')}")
+        debug_views.append(str(view))
+    if debug_views:
+        log(f"디버거 리플레이 {len(debug_views)}건")
+
     pdfs: list[str] = []
     if pdf:
         from .docgen.pdf import html_to_pdf
@@ -243,6 +261,7 @@ def _postprocess(config: dict, journey_path: Path, journey: Journey,
         "journey_path": str(journey_path),
         "outputs": outputs,
         "pdfs": pdfs,
+        "debug_views": debug_views,
         "video": journey.video,
         "narrated": narrated,
         "steps": [{"idx": s.idx, "action": s.action, "selector": s.selector,

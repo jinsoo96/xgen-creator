@@ -1,0 +1,61 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from xgen_creator.docgen.debug_view import build_debug_view, _source_map
+
+PAYLOAD = {
+    "trace_id": "t1", "method": "GET", "path": "/api/x", "status": 200,
+    "duration_ms": 12.0, "event_count": 4, "file_count": 1, "truncated": False,
+    "files": {"/srv/app.py": [10, 11, 12]},
+    "flow": [
+        ["line", "/srv/app.py", 10, "handler", 1],
+        ["call", "/srv/app.py", 20, "helper", 2],   # call 이벤트는 리플레이에서 제외
+        ["line", "/srv/app.py", 11, "handler", 1],
+        ["line", "/srv/app.py", 12, "handler", 1],
+    ],
+    "slices": [{
+        "file": "/srv/app.py", "executed_count": 3, "total_lines": 15,
+        "excerpts": [{"start": 9, "end": 13, "lines": [
+            [9, False, "def handler(req):"],
+            [10, True, "    user = auth(req)"],
+            [11, True, "    data = load(user)"],
+            [12, True, "    return data"],
+            [13, False, ""],
+        ]}],
+    }],
+}
+
+
+class DebugViewTest(unittest.TestCase):
+    def test_source_map_from_slices(self):
+        src = _source_map(PAYLOAD)
+        self.assertEqual(src["/srv/app.py"]["10"], "    user = auth(req)")
+        self.assertEqual(src["/srv/app.py"]["12"], "    return data")
+
+    def test_build_self_contained_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = build_debug_view(PAYLOAD, Path(tmp) / "replay.html")
+            html = out.read_text(encoding="utf-8")
+            self.assertIn("디버거 리플레이", html)
+            self.assertIn("GET /api/x", html)
+            # 외부 리소스 0 (self-contained)
+            self.assertNotIn("http://", html.split("__DATA__")[0] if "__DATA__" in html else html)
+            self.assertNotIn("src=\"http", html)
+            # flow가 임베드되고 call 이벤트는 빠졌다 (line 3개만)
+            start = html.index("const D = ") + len("const D = ")
+            data = json.loads(html[start:html.index("\n", start)].rstrip(";"))
+            self.assertEqual(len(data["flow"]), 3, "line 이벤트만 리플레이에 들어간다")
+            self.assertEqual([f[1] for f in data["flow"]], [10, 11, 12])
+            self.assertIn("/srv/app.py", data["src"])
+
+    def test_empty_flow_still_builds(self):
+        payload = dict(PAYLOAD, flow=[])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = build_debug_view(payload, Path(tmp) / "e.html")
+            self.assertTrue(out.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
