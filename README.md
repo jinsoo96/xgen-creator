@@ -60,6 +60,10 @@ creator doctor              # 자가검증 — 능력이 실제로 되는지
 # 보고 → 행동 → 결과를 다시 보고 → 스스로 완료 판단 (AI가 버튼을 누른다)
 creator make --goal "분석 실행 버튼을 눌러 결과를 확인한다" --pdf
 
+# 로그인 게이트가 있는 화면은 로그인을 먼저 결정론으로 수행한 뒤 AI가 이어받는다
+# ("mask": true 스텝의 값은 LLM에도 증거에도 남기지 않음)
+creator make --goal "..." --pre-steps login.json
+
 # 또는 스텝을 직접 정의
 creator make --steps examples/demo_steps.json --pdf
 # 명령 하나 = (계획) → 여정 기록(영상 webm) → 서술(source 모델) → 화면정의서·테스트결과서·챕터 → PDF
@@ -91,6 +95,7 @@ creator record --steps examples/demo_steps.json --title "로그인 여정" --vid
 # 여정 → 산출물 양식 (변경된 여정만 재렌더, --pdf로 Edge headless PDF)
 creator doc build --form test-report --pdf     # 테스트결과서
 creator doc build --form screen-spec           # 화면정의서
+creator doc build --form api-spec              # API 명세서
 creator doc build                              # 챕터 문서(journey)
 ```
 
@@ -129,7 +134,7 @@ creator roles                              # 모델 역할 (agent / source)
 | **실행 슬라이스** | 트레이스된 라인을 소스 발췌로 렌더(`>` 마커 = 실행됨). "돌아간 만큼만" 보여준다 |
 | **트레이스 저장소** | 미들웨어(쓰기)↔브리지(읽기)가 파일시스템으로 공유. 원자적 교체로 반쯤 쓴 파일 없음 |
 | **빌드 파이프라인** | 여정 해시 변경 감지 → 바뀐 것만 재렌더. 소스 변경 → 재수집 → 자동 재생성 |
-| **산출물 양식** | 화면정의서(screen-spec)·테스트결과서(test-report) 레지스트리. 새 양식 = 렌더 함수 한 쌍 등록 |
+| **산출물 양식** | 화면정의서(screen-spec)·테스트결과서(test-report)·API 명세서(api-spec) 레지스트리. 새 양식 = 렌더 함수 한 쌍 등록 |
 | **모델 역할** | agent(Opus, 화면 보고 여정 계획)와 source(Fable, 증거 서술)를 분리 배정. LLM은 증거에 있는 것만 서술하고, 없는 건 "증거 없음" |
 | **자동 재생성** | `creator watch` — 여정이 바뀌면 재렌더, `--sources`면 백엔드/프론트 소스 변경 시 여정 재수집까지(빌드 파이프라인) |
 | **저오버헤드 트레이서** | py3.12+는 sys.monitoring(PEP 669) 기본 — 스코프 밖 코드 위치는 영구 배제. 구버전은 settrace 폴백 |
