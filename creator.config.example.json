@@ -1,0 +1,18 @@
+{
+  "base_url": "http://localhost:3000",
+  "backend_url": "http://localhost:8000",
+  "trace_dir": ".creator/traces",
+  "journey_dir": ".creator/journeys",
+  "out_dir": "docs_out",
+  "rules_dir": "rules",
+  "backend_roots": [
+    "/path/to/backend-repo"
+  ],
+  "frontend_roots": [
+    "/path/to/frontend-monorepo"
+  ],
+  "models": {
+    "agent": "claude-opus-4-8",
+    "source": "claude-fable-5"
+  }
+}
