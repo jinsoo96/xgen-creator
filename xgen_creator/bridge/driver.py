@@ -14,6 +14,44 @@ from ..trace.store import TraceStore
 
 ACTIONS = ("goto", "click", "fill", "press")
 
+# 화면의 상호작용 요소(버튼·링크·입력)를 selector와 함께 요약 — 계획자에게 넘길 스냅샷
+_OUTLINE_JS = """(max) => {
+    const sel = 'button, a[href], input, [role=button], [data-testid]';
+    const out = [];
+    for (const el of document.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        const testid = el.dataset ? el.dataset.testid : null;
+        let s = null;
+        if (testid) s = '[data-testid=' + testid + ']';
+        else if (el.id) s = '#' + el.id;
+        else if (el.name) s = el.tagName.toLowerCase() + '[name=' + el.name + ']';
+        else if (el.type) s = el.tagName.toLowerCase() + '[type=' + el.type + ']';
+        else continue;
+        out.push({ tag: el.tagName.toLowerCase(), selector: s,
+            text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60) || null,
+            type: el.type || null });
+        if (out.length >= max) break;
+    }
+    return out;
+}"""
+
+
+def resolve_goto(target: str | None, base_url: str) -> str | None:
+    """goto 대상을 앱 URL로 정규화. 앱 경로(/x)·동일 오리진 http만 허용.
+
+    about:blank·주소창·외부 URL 등 에이전트가 지어낼 수 있는 무효/이탈 대상은 None
+    (스텝은 no-op으로 안전 처리). base_url 오리진을 벗어난 http도 거부한다.
+    """
+    if not target:
+        return base_url + "/"
+    target = target.strip()
+    if target.startswith("/"):
+        return base_url.rstrip("/") + target
+    if target.startswith(base_url.rstrip("/") + "/") or target == base_url.rstrip("/"):
+        return target
+    return None  # about:blank, address-bar, 외부 도메인 등 → 거부
+
 
 def swap_base(url: str, target_base: str) -> str:
     """URL의 스킴+호스트만 target_base로 교체 (경로·쿼리 보존) — 사이드카 션트용."""
@@ -88,35 +126,31 @@ class BridgeSession:
 
     # -- 계획용 화면 요약 ----------------------------------------------------
     def outline(self, url: str | None = None, max_elements: int = 45) -> list[dict]:
-        """상호작용 요소(버튼·링크·입력) 목록 — 계획자에게 넘길 화면 스냅샷."""
+        """상호작용 요소(버튼·링크·입력) 목록 — 계획자에게 넘길 화면 스냅샷.
+
+        로그인 후 리다이렉트 등 네비게이션 중이면 컨텍스트가 파괴될 수 있어,
+        페이지 안정을 기다린 뒤 실행하고 네비게이션 충돌 시 1회 재시도한다.
+        """
         page = self._page
         if url is not None:
             page.goto(url if url.startswith("http") else self.base_url + url)
+        for state in ("domcontentloaded", "networkidle"):
             try:
-                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_load_state(state, timeout=6000)
             except Exception:
                 pass
-        return page.evaluate(
-            """(max) => {
-                const sel = 'button, a[href], input, [role=button], [data-testid]';
-                const out = [];
-                for (const el of document.querySelectorAll(sel)) {
-                    const r = el.getBoundingClientRect();
-                    if (r.width === 0 || r.height === 0) continue;
-                    const testid = el.dataset ? el.dataset.testid : null;
-                    let s = null;
-                    if (testid) s = '[data-testid=' + testid + ']';
-                    else if (el.id) s = '#' + el.id;
-                    else if (el.name) s = el.tagName.toLowerCase() + '[name=' + el.name + ']';
-                    else if (el.type) s = el.tagName.toLowerCase() + '[type=' + el.type + ']';
-                    else continue;
-                    out.push({ tag: el.tagName.toLowerCase(), selector: s,
-                        text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60) || null,
-                        type: el.type || null });
-                    if (out.length >= max) break;
-                }
-                return out;
-            }""", max_elements)
+        for attempt in range(2):
+            try:
+                return page.evaluate(_OUTLINE_JS, max_elements)
+            except Exception:
+                if attempt == 0:  # 네비게이션으로 컨텍스트 파괴 → 안정 후 재시도
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=6000)
+                    except Exception:
+                        page.wait_for_timeout(800)
+                    continue
+                return []  # 끝내 못 잡으면 빈 목록(정직) — 루프가 done 판단
+        return []
 
     # -- 스텝 ---------------------------------------------------------------
     def step(self, action: str, selector: str | None = None,
@@ -139,8 +173,13 @@ class BridgeSession:
 
         page.on("request", _on_request)
 
+        skipped = None
         if action == "goto":
-            page.goto(value if value else self.base_url + (selector or "/"))
+            dest = resolve_goto(value or selector, self.base_url)
+            if dest is None:  # 무효/이탈 대상은 이동하지 않고 정직 기록
+                skipped = f"무효 goto 대상 무시: {value or selector!r}"
+            else:
+                page.goto(dest)
         elif action == "click":
             page.click(selector)
         elif action == "fill":
@@ -186,4 +225,5 @@ class BridgeSession:
             "element": element,
             "api": api_calls,
             "backend": backend,
+            "skipped": skipped,
         }

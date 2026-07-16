@@ -4,6 +4,25 @@ from pathlib import Path
 
 from xgen_creator.link import route_from_rel, scan_routes, resolve_element
 from xgen_creator.link.routes_nextjs import match_route
+from xgen_creator.bridge.driver import resolve_goto
+
+
+class ResolveGotoTest(unittest.TestCase):
+    BASE = "http://localhost:3100"
+
+    def test_app_path_resolved(self):
+        self.assertEqual(resolve_goto("/canvas", self.BASE), "http://localhost:3100/canvas")
+
+    def test_none_defaults_root(self):
+        self.assertEqual(resolve_goto(None, self.BASE), "http://localhost:3100/")
+
+    def test_same_origin_http_kept(self):
+        self.assertEqual(resolve_goto("http://localhost:3100/x", self.BASE),
+                         "http://localhost:3100/x")
+
+    def test_invalid_and_offsite_rejected(self):
+        for bad in ("about:blank", "address-bar", "https://evil.com/", "javascript:1"):
+            self.assertIsNone(resolve_goto(bad, self.BASE), bad)
 
 
 class RouteMapTest(unittest.TestCase):

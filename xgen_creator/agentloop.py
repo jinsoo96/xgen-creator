@@ -18,8 +18,12 @@ _SYSTEM = """너는 XGEN CREATOR의 여정 수행 에이전트다. 목표를 향
 출력은 JSON 객체 하나만:
 - 다음 행동: {"action":"goto|click|fill|press","selector":"...","value"(선택),"note"(선택)}
 - 목표 달성/더 할 것 없음: {"done": true, "reason": "..."}
-규칙: selector는 요소 목록에 있는 것만 인용한다. 같은 행동을 의미 없이 반복하지 않는다.
-확신이 없으면 done으로 멈추고 reason에 밝힌다. 설명·코드펜스 없이 JSON만."""
+규칙:
+- click/fill/press의 selector는 요소 목록에 있는 것만 인용한다(새로 지어내지 않는다).
+- goto는 이 앱 안의 경로만 쓴다 — 예: {"action":"goto","value":"/canvas"}. 브라우저 주소창·
+  about:blank·외부 URL은 절대 쓰지 않는다.
+- 같은 행동을 의미 없이 반복하지 않는다. 직전 행동이 skipped/무효였다면 다른 방법을 택한다.
+- 확신이 없으면 done으로 멈추고 reason에 밝힌다. 설명·코드펜스 없이 JSON만."""
 
 
 def _extract_object(text: str) -> dict:
@@ -79,8 +83,12 @@ def run_goal_loop(goal: str, session, client: LLMClient, roles: ModelRoles,
         raw = session.step(action, decision.get("selector"),
                            decision.get("value"), decision.get("note") or "")
         raws.append(raw)
-        history.append({"turn": turn, "action": f"{action} {decision.get('selector') or ''}",
-                        "url": raw.get("url_after"),
-                        "api_호출": len(raw.get("api") or []),
-                        "백엔드_트레이스": bool(raw.get("backend"))})
+        entry = {"turn": turn,
+                 "action": f"{action} {decision.get('selector') or decision.get('value') or ''}",
+                 "url": raw.get("url_after"),
+                 "api_호출": len(raw.get("api") or []),
+                 "백엔드_트레이스": bool(raw.get("backend"))}
+        if raw.get("skipped"):
+            entry["결과"] = raw["skipped"]  # 무효 스텝을 되먹여 에이전트가 교정하게
+        history.append(entry)
     return raws, f"최대 턴({max_turns}) 도달"
