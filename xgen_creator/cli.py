@@ -36,22 +36,26 @@ def _cmd_trace_run(args, config) -> int:
     return 0
 
 
-def _cmd_record(args, config) -> int:
-    """스텝 정의 JSON을 브리지로 실행해 여정 JSON을 만든다. (playwright 필요)"""
+def _record_journey(config, steps_path: str, base_url: str | None = None,
+                    journey_id: str | None = None, title: str | None = None,
+                    headed: bool = False, video: bool = False,
+                    reroute: list | None = None) -> Path:
+    """스텝 정의 JSON을 브리지로 실행해 여정 JSON 경로를 반환. (playwright 필요)"""
     from .bridge.driver import BridgeSession  # optional 의존 — 지연 임포트
     from .docgen.model import Journey, Step
 
-    steps_def = json.loads(Path(args.steps).read_text(encoding="utf-8"))
-    base_url = args.base_url or config.get("base_url")
+    steps_def = json.loads(Path(steps_path).read_text(encoding="utf-8"))
+    base_url = base_url or config.get("base_url")
     if not base_url:
-        print("base_url 필요 (--base-url 또는 creator.config.json)", file=sys.stderr)
-        return 2
-    journey_id = args.id or Path(args.steps).stem
-    shot_dir = Path(config["journey_dir"]) / journey_id / "shots"
+        raise SystemExit("base_url 필요 (--base-url 또는 creator.config.json)")
+    journey_id = journey_id or Path(steps_path).stem
+    journey_root = Path(config["journey_dir"]) / journey_id
 
     steps = []
     with BridgeSession(base_url, trace_store=config["trace_dir"],
-                       shot_dir=shot_dir, headless=not args.headed) as session:
+                       shot_dir=journey_root / "shots", headless=not headed,
+                       video_dir=(journey_root / "video") if video else None,
+                       reroute=reroute) as session:
         for step_def in steps_def:
             raw = session.step(**step_def)
             if raw.get("element"):
@@ -62,10 +66,88 @@ def _cmd_record(args, config) -> int:
             print(f"  스텝 {raw['idx']}: {raw['action']} {raw.get('selector') or ''} "
                   f"→ 백엔드 트레이스 {'확보' if raw.get('backend') else '없음'}")
 
-    journey = Journey(id=journey_id, title=args.title or journey_id, base_url=base_url,
-                      created=datetime.now(timezone.utc).isoformat(), steps=steps)
+    journey = Journey(id=journey_id, title=title or journey_id, base_url=base_url,
+                      created=datetime.now(timezone.utc).isoformat(),
+                      video=session.video_path, steps=steps)
     out = journey.save(Path(config["journey_dir"]) / f"{journey_id}.json")
     print(f"여정 저장: {out}")
+    return out
+
+
+def _cmd_record(args, config) -> int:
+    _record_journey(config, args.steps, base_url=args.base_url, journey_id=args.id,
+                    title=args.title, headed=args.headed, video=args.video,
+                    reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
+    return 0
+
+
+def _cmd_make(args, config) -> int:
+    """"산출물 만들어줘" 원샷 — 여정 확보 → (서술) → 전 양식 → (PDF)."""
+    from .docgen.model import Journey
+
+    if args.steps:
+        journey_path = _record_journey(
+            config, args.steps, base_url=args.base_url, journey_id=args.id,
+            title=args.title, headed=args.headed, video=True,
+            reroute=[tuple(r.split("=", 1)) for r in (args.reroute or [])])
+    else:
+        candidates = sorted(Path(config["journey_dir"]).glob("*.json"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            print("여정이 없다 — --steps <정의.json> 으로 기록부터", file=sys.stderr)
+            return 2
+        journey_path = candidates[0]
+    journey = Journey.load(journey_path)
+    print(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
+
+    narrated = False
+    if not args.no_narrate:
+        from .llm import LLMClient
+        client = LLMClient.from_env(config)
+        if client is None:
+            print("서술 생략 — LLM 엔드포인트 미설정 (XGEN_CREATOR_LLM_BASE_URL)")
+        else:
+            from .docgen.narrate import narrate_journey
+            rules_context = compose_context(load_rules(config.get("rules_dir", "rules")))
+            roles = load_roles(config)
+            print(f"서술 중… (source 모델: {roles.source})")
+            narrate_journey(journey, client, roles, rules_context)
+            journey.save(journey_path)
+            narrated = journey.narrative is not None
+            if not narrated:
+                print("서술 실패 — LLM 미응답/오류. 증거 문서는 서술 없이 그대로 생성한다.")
+
+    out_dir = args.out or config["out_dir"]
+    outputs: list[str] = []
+    for form in ("journey", "screen-spec", "test-report"):
+        report = build([journey_path], out_dir, form=form, force=True)
+        outputs += report["outputs"]
+
+    pdfs: list[str] = []
+    if args.pdf:
+        from .docgen.pdf import html_to_pdf
+        for path in outputs:
+            if path.endswith(".html"):
+                pdfs.append(str(html_to_pdf(path)))
+
+    print("\n=== 산출물 ===")
+    for path in outputs + pdfs:
+        print(f"  {path}")
+    print(f"영상: {journey.video or '없음'} · 서술: {'포함' if narrated else '없음'} · "
+          f"백엔드 증거 {sum(1 for s in journey.steps if s.backend)}/{len(journey.steps)}")
+    return 0
+
+
+def _cmd_sidecar(args, config) -> int:
+    """대상 ASGI 앱을 미들웨어로 감싸 기동 (대상 venv 안에서 실행)."""
+    from .sidecar import run_sidecar
+    live_hub = None
+    if args.live:
+        from .live import LiveHub
+        live_hub = LiveHub()
+    run_sidecar(args.app, args.dir, args.port,
+                roots=args.roots or config.get("backend_roots") or [args.dir],
+                trace_dir=args.trace_dir or config["trace_dir"], live_hub=live_hub)
     return 0
 
 
@@ -78,6 +160,10 @@ def _cmd_doc_build(args, config) -> int:
         return 2
     report = build(paths, args.out or config["out_dir"],
                    html=not args.no_html, force=args.force, form=args.form)
+    if args.pdf:
+        from .docgen.pdf import html_to_pdf
+        report["pdf"] = [str(html_to_pdf(p)) for p in report["outputs"]
+                         if p.endswith(".html")]
     print(json.dumps(report, ensure_ascii=False, indent=1))
     return 0
 
@@ -182,6 +268,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--id", default=None)
     p.add_argument("--title", default=None)
     p.add_argument("--headed", action="store_true")
+    p.add_argument("--video", action="store_true", help="수행 영상(webm) 녹화")
+    p.add_argument("--reroute", nargs="*", default=[],
+                   help="'url글롭패턴=대상베이스' — 매칭 요청을 사이드카로 션트")
+
+    p = sub.add_parser("make", help="원샷: 여정→서술→전 양식→PDF (산출물 만들어줘)")
+    p.add_argument("--steps", default=None, help="스텝 정의 JSON (없으면 최신 여정 재사용)")
+    p.add_argument("--base-url", default=None)
+    p.add_argument("--id", default=None)
+    p.add_argument("--title", default=None)
+    p.add_argument("--out", default=None)
+    p.add_argument("--headed", action="store_true")
+    p.add_argument("--reroute", nargs="*", default=[])
+    p.add_argument("--no-narrate", action="store_true", help="LLM 서술 생략")
+    p.add_argument("--pdf", action="store_true", help="html 산출물을 PDF로도 출력")
+
+    p = sub.add_parser("sidecar", help="대상 ASGI 앱을 미들웨어로 감싸 기동")
+    p.add_argument("app", help="모듈:앱 (예: main:app)")
+    p.add_argument("--dir", required=True, help="대상 앱 루트 디렉토리")
+    p.add_argument("--port", type=int, default=8201)
+    p.add_argument("--roots", nargs="*", default=None)
+    p.add_argument("--trace-dir", default=None)
+    p.add_argument("--live", action="store_true", help="라이브 소스스크린 허브 장착")
 
     p = sub.add_parser("doc", help="산출물")
     doc_sub = p.add_subparsers(dest="doc_command", required=True)
@@ -192,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                          choices=["journey", "screen-spec", "test-report"],
                          help="산출물 양식 (기본 journey=챕터 문서)")
     p_build.add_argument("--no-html", action="store_true")
+    p_build.add_argument("--pdf", action="store_true", help="html을 PDF로도 (Edge headless)")
     p_build.add_argument("--force", action="store_true")
 
     p = sub.add_parser("routes", help="Next.js 라우트맵")
@@ -210,6 +319,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_trace_run(args, config)
     if args.command == "record":
         return _cmd_record(args, config)
+    if args.command == "make":
+        return _cmd_make(args, config)
+    if args.command == "sidecar":
+        return _cmd_sidecar(args, config)
     if args.command == "doc":
         return _cmd_doc_build(args, config)
     if args.command == "routes":

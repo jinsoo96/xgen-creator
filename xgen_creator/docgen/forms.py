@@ -140,7 +140,9 @@ def _test_report_md(journey: Journey) -> str:
         f"| 총 스텝 | {len(journey.steps)} (성공/수행 {passed} · 실패 {failed}) |",
         f"| 백엔드 증거 확보 | {traced}/{len(journey.steps)} 스텝 |",
         "| 수행 방식 | XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스) |",
-    ] + ([f"| 수행 영상 | `{journey.video}` |"] if journey.video else []) + [
+    ] + ([f"| 수행 영상 | `{journey.video}` |"] if journey.video else []) + (
+        ["", "## 개요 해설", "", journey.narrative] if journey.narrative else []
+    ) + [
         "",
         "## 수행 결과",
         "",
@@ -161,8 +163,10 @@ def _test_report_md(journey: Journey) -> str:
             continue
         appended = True
         out += [f"### 스텝 {s.idx} — {s.backend.get('method')} {s.backend.get('path')}"
-                f" ({s.backend.get('duration_ms')}ms)", "", "```",
-                _slice_block(s.backend), "```", ""]
+                f" ({s.backend.get('duration_ms')}ms)", ""]
+        if s.narrative:
+            out += [s.narrative, ""]
+        out += ["```", _slice_block(s.backend), "```", ""]
     if not appended:
         out += [f"({NO_EVIDENCE} — 백엔드 트레이스가 캡처된 스텝이 없다)", ""]
     return "\n".join(out)
@@ -230,6 +234,8 @@ def _screen_spec_html(journey: Journey, embed_shots: bool = True) -> str:
             f"<tr><th>대상 시스템</th><td>{_esc(journey.base_url) or NO_EVIDENCE}</td></tr>",
             f"<tr><th>증거 수집 시각</th><td>{_esc(journey.created) or NO_EVIDENCE}</td></tr>",
             "<tr><th>작성 방식</th><td>XGEN CREATOR 자동 생성 (소스+실행 증거 기반)</td></tr></table>"]
+    if journey.narrative:
+        body.append(f"<h2>개요 해설</h2><p>{_esc(journey.narrative)}</p>")
     for i, (url, steps) in enumerate(_screens(journey), 1):
         body.append(f"<h2>SCR-{i:02d} — <code>{_esc(url)}</code></h2>")
         body.append(_shot_img(steps, embed_shots))
@@ -261,7 +267,8 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
             f"<tr><th>백엔드 증거 확보</th><td>{traced}/{len(journey.steps)} 스텝</td></tr>"
             + (f"<tr><th>수행 영상</th><td><code>{_esc(journey.video)}</code></td></tr>"
                if journey.video else "")
-            + "<tr><th>수행 방식</th><td>XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스)</td></tr></table>",
+            + "<tr><th>수행 방식</th><td>XGEN CREATOR Live Bridge (실브라우저 + 실행 트레이스)</td></tr></table>"
+            + (f"<h2>개요 해설</h2><p>{_esc(journey.narrative)}</p>" if journey.narrative else ""),
             "<h2>수행 결과</h2>",
             "<table><tr><th>#</th><th>수행 내용</th><th>대상 요소</th><th>화면 전환</th>"
             "<th>판정</th><th>판정 근거</th><th>트레이스</th></tr>"]
@@ -289,6 +296,8 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
         appended = True
         body.append(f"<h3>스텝 {s.idx} — <code>{_esc(s.backend.get('method'))} "
                     f"{_esc(s.backend.get('path'))}</code> ({s.backend.get('duration_ms')}ms)</h3>")
+        if s.narrative:
+            body.append(f"<p>{_esc(s.narrative)}</p>")
         body.append(_slice_pre(s.backend))
     if not appended:
         body.append(f'<p class="footnote">{NO_EVIDENCE} — 백엔드 트레이스가 캡처된 스텝이 없다.</p>')

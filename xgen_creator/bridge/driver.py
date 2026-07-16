@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..trace.store import TraceStore
 
 ACTIONS = ("goto", "click", "fill", "press")
+
+
+def swap_base(url: str, target_base: str) -> str:
+    """URL의 스킴+호스트만 target_base로 교체 (경로·쿼리 보존) — 사이드카 션트용."""
+    parts = urlsplit(url)
+    base = target_base.rstrip("/")
+    return base + parts.path + (f"?{parts.query}" if parts.query else "")
 
 
 class BridgeSession:
@@ -23,6 +31,7 @@ class BridgeSession:
         headless: bool = True,
         backend_wait: float = 8.0,
         video_dir: str | Path | None = None,
+        reroute: list[tuple[str, str]] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.store = TraceStore(trace_store) if isinstance(trace_store, str) else trace_store
@@ -31,6 +40,8 @@ class BridgeSession:
         self.backend_wait = backend_wait
         self.video_dir = Path(video_dir) if video_dir else None
         self.video_path: str | None = None  # __exit__ 후에 유효 (여정에 첨부)
+        # [(url glob 패턴, target_base)] — 매칭 요청을 사이드카 등으로 션트(레포 무수정 관측)
+        self.reroute = reroute or []
         self._pw = None
         self._browser = None
         self._page = None
@@ -53,6 +64,10 @@ class BridgeSession:
             context_args = {"record_video_dir": str(self.video_dir),
                             "record_video_size": {"width": 1280, "height": 720}}
         self._context = self._browser.new_context(**context_args)
+        for pattern, target_base in self.reroute:
+            def _shunt(route, request, _tb=target_base):
+                route.continue_(url=swap_base(request.url, _tb))
+            self._context.route(pattern, _shunt)
         self._page = self._context.new_page()
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         return self

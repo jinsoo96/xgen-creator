@@ -25,6 +25,7 @@ class Step:
     frontend_sources: list = field(default_factory=list)  # link.resolve_element 결과
     api: list = field(default_factory=list)               # 액션 중 관측된 fetch/xhr
     backend: dict | None = None       # 미들웨어 payload (files/flow/slices/status...)
+    narrative: str | None = None      # source 역할 모델의 해설 (증거 기반 서술만)
 
 
 @dataclass
@@ -34,6 +35,7 @@ class Journey:
     base_url: str = ""
     created: str = ""                 # ISO8601 — 증거 수집 시각 (신선도 표기용)
     video: str | None = None          # 수행 전체 녹화 파일 (bridge video_dir 사용 시)
+    narrative: str | None = None      # 여정 전체 해설 (source 역할 모델)
     steps: list[Step] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -44,7 +46,8 @@ class Journey:
         steps = [Step(**s) for s in data.get("steps", [])]
         return cls(id=data["id"], title=data.get("title", data["id"]),
                    base_url=data.get("base_url", ""), created=data.get("created", ""),
-                   video=data.get("video"), steps=steps)
+                   video=data.get("video"), narrative=data.get("narrative"),
+                   steps=steps)
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)

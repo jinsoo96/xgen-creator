@@ -1,6 +1,4 @@
 [
-  {"action": "goto", "selector": "/"},
-  {"action": "fill", "selector": "input[name=email]", "value": "user@example.com"},
-  {"action": "fill", "selector": "input[name=password]", "value": "********"},
-  {"action": "click", "selector": "button[type=submit]", "note": "로그인 버튼 — 백엔드 인증 흐름이 트레이스된다"}
+  {"action": "goto", "selector": "/", "note": "데모 화면 진입"},
+  {"action": "click", "selector": "[data-testid=analyze-button]", "note": "분석 실행 — 백엔드 /api/analyze가 트레이스된다"}
 ]
