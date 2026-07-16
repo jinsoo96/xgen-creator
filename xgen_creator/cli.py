@@ -77,7 +77,7 @@ def _cmd_doc_build(args, config) -> int:
         print("여정 JSON이 없다 — 먼저 `creator record`", file=sys.stderr)
         return 2
     report = build(paths, args.out or config["out_dir"],
-                   html=not args.no_html, force=args.force)
+                   html=not args.no_html, force=args.force, form=args.form)
     print(json.dumps(report, ensure_ascii=False, indent=1))
     return 0
 
@@ -188,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
     p_build = doc_sub.add_parser("build", help="여정 → 문서 (변경분만)")
     p_build.add_argument("--journey", nargs="*", default=[])
     p_build.add_argument("--out", default=None)
+    p_build.add_argument("--form", default="journey",
+                         choices=["journey", "screen-spec", "test-report"],
+                         help="산출물 양식 (기본 journey=챕터 문서)")
     p_build.add_argument("--no-html", action="store_true")
     p_build.add_argument("--force", action="store_true")
 

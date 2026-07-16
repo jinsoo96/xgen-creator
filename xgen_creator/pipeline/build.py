@@ -12,6 +12,7 @@ from pathlib import Path
 from ..docgen.model import Journey
 from ..docgen.render_md import render_journey_md
 from ..docgen.render_html import render_journey_html
+from ..docgen.forms import render_form
 
 
 def _hash_file(path: Path) -> str:
@@ -24,8 +25,12 @@ def build(
     state_file: str | Path = ".creator/build-state.json",
     html: bool = True,
     force: bool = False,
+    form: str = "journey",
 ) -> dict:
-    """반환: {built: [여정id...], skipped: [...], outputs: [경로...]}"""
+    """반환: {built: [여정id...], skipped: [...], outputs: [경로...]}
+
+    form="journey"는 챕터 문서, 그 외는 docgen.forms 레지스트리의 산출물 양식.
+    """
     state_path = Path(state_file)
     state: dict = {}
     if state_path.exists():
@@ -39,14 +44,19 @@ def build(
         jp = Path(jp)
         digest = _hash_file(jp)
         journey = Journey.load(jp)
-        if not force and state.get(journey.id) == digest:
+        state_key = f"{journey.id}:{form}"
+        if not force and state.get(state_key) == digest:
             report["skipped"].append(journey.id)
             continue
         chapter_dir = Path(out_dir) / journey.id
-        written = render_journey_md(journey, chapter_dir)
-        if html:
-            written.append(render_journey_html(journey, chapter_dir / f"{journey.id}.html"))
-        state[journey.id] = digest
+        if form == "journey":
+            written = render_journey_md(journey, chapter_dir)
+            if html:
+                written.append(render_journey_html(journey, chapter_dir / f"{journey.id}.html"))
+        else:
+            written = render_form(journey, form, chapter_dir,
+                                  fmt="both" if html else "md")
+        state[state_key] = digest
         report["built"].append(journey.id)
         report["outputs"] += [str(p) for p in written]
 

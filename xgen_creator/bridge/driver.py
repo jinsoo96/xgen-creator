@@ -68,9 +68,13 @@ class BridgeSession:
 
         page = self._page
         url_before = page.url
-        api_before = []
-        page.on("request", lambda req: api_before.append(
-            {"method": req.method, "url": req.url}) if req.resource_type in ("fetch", "xhr") else None)
+        api_calls = []
+
+        def _on_request(req):
+            if req.resource_type in ("fetch", "xhr"):
+                api_calls.append({"method": req.method, "url": req.url})
+
+        page.on("request", _on_request)
 
         if action == "goto":
             page.goto(value if value else self.base_url + (selector or "/"))
@@ -84,6 +88,7 @@ class BridgeSession:
             page.wait_for_load_state("networkidle", timeout=int(self.backend_wait * 1000))
         except Exception:
             pass  # SPA 폴링 등으로 idle 미도달 가능 — 증거 수집은 계속
+        page.remove_listener("request", _on_request)  # 다음 스텝 증거 오염 방지
 
         shot = self.shot_dir / f"step-{self._step_no:02d}.png"
         page.screenshot(path=str(shot), full_page=False)
@@ -116,6 +121,6 @@ class BridgeSession:
             "url_after": page.url,
             "screenshot": str(shot),
             "element": element,
-            "api": api_before,
+            "api": api_calls,
             "backend": backend,
         }
