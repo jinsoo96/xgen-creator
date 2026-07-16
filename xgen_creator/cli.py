@@ -237,8 +237,6 @@ def _cmd_doctor(args, config) -> int:
     check("Python >= 3.10", sys.version_info >= (3, 10), sys.version.split()[0])
 
     # 트레이서 실동작: 자기 자신을 트레이스
-    probe_lines: list[int] = []
-
     def _probe():
         x = 1
         return x + 1

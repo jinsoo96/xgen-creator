@@ -173,16 +173,15 @@ function callStack(idx) {
 
 function render() {
   const [file, line, func, depth] = flow[i];
-  if (file !== renderedFile) renderFile(file, line);
-  else {
+  if (file !== renderedFile) {
+    renderFile(file, line);                 // 새 파일: 렌더하며 현재 라인을 cur로 표시
+  } else {
     codeEl.querySelectorAll(".row.cur").forEach(r => r.classList.remove("cur"));
     const r = codeEl.querySelector('.row[data-no="' + line + '"]');
-    if (r) { r.classList.add("cur"); r.scrollIntoView({ block: "center" }); }
+    if (r) r.classList.add("cur");
   }
-  if (file === renderedFile) {
-    const r = codeEl.querySelector('.row[data-no="' + line + '"]');
-    if (r) { r.classList.add("cur"); r.scrollIntoView({ block: "center", behavior: "smooth" }); }
-  }
+  const cur = codeEl.querySelector(".row.cur");
+  if (cur) cur.scrollIntoView({ block: "center" });   // 현재 라인 한 번만 중앙 정렬
   const frames = callStack(i);
   stackEl.innerHTML = "";
   frames.slice().reverse().forEach((f, idx) => {
