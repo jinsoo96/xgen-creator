@@ -12,8 +12,9 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 
 @dataclass
@@ -64,7 +65,7 @@ class LineTracer:
     def __init__(
         self,
         roots: list[str],
-        on_event: Optional[Callable[[TraceEvent], None]] = None,
+        on_event: Callable[[TraceEvent], None] | None = None,
         max_events: int = 200_000,
         record_calls: bool = False,
         backend: str = "auto",  # auto | monitoring | settrace
@@ -110,10 +111,9 @@ class LineTracer:
             return
         self.result.events.append(ev)
         if self.on_event is not None:
-            try:
+            # 관측 콜백 실패가 대상 실행을 깨면 안 된다
+            with contextlib.suppress(Exception):
                 self.on_event(ev)
-            except Exception:
-                pass  # 관측 콜백 실패가 대상 실행을 깨면 안 된다
 
     def _global_trace(self, frame, event, arg):
         if not self._active or event != "call":
@@ -222,7 +222,7 @@ class LineTracer:
             threading.settrace(self._prev_trace)  # None이면 해제
         return self.result
 
-    def __enter__(self) -> "LineTracer":
+    def __enter__(self) -> LineTracer:
         self.start()
         return self
 

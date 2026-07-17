@@ -54,6 +54,6 @@ def match_route(routes: dict[str, str], url_path: str) -> tuple[str, str] | None
         segs = [s for s in route.split("/") if s]
         if len(segs) != len(url_segs):
             continue
-        if all(s.startswith("[") or s == u for s, u in zip(segs, url_segs)):
+        if all(s.startswith("[") or s == u for s, u in zip(segs, url_segs, strict=True)):
             return route, rel
     return None

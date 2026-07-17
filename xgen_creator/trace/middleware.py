@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 
@@ -101,7 +102,5 @@ class CreatorTraceMiddleware:
                     "slices": [sl.to_dict()
                                for sl in build_slices(sliced, context=self.context)],
                 }
-                try:
+                with contextlib.suppress(OSError):
                     self.store.save(trace_id, payload)
-                except OSError:
-                    pass

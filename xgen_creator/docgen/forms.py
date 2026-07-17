@@ -150,7 +150,7 @@ def _test_report_md(journey: Journey) -> str:
         "| # | 수행 내용 | 대상 요소 | 화면 전환 | 판정 | 판정 근거 | 트레이스 |",
         "|---|---|---|---|---|---|---|",
     ]
-    for s, (verdict, basis) in zip(journey.steps, verdicts):
+    for s, (verdict, basis) in zip(journey.steps, verdicts, strict=True):
         content = _ACTION_KO.get(s.action, s.action) + (f" `{s.value}`" if s.value and s.action == "fill" else "")
         if s.note:
             content += f" — {s.note}"
@@ -167,8 +167,9 @@ def _test_report_md(journey: Journey) -> str:
                 f" ({s.backend.get('duration_ms')}ms)", ""]
         if s.narrative:
             out += [s.narrative, ""]
-        out += [f"> 디버거 리플레이(line-by-line 스텝 실행): [debug/step-{s.idx:02d}.html]"
-                f"(debug/step-{s.idx:02d}.html)", ""]
+        if s.backend.get("flow"):  # 리플레이는 실행 흐름이 있을 때만 생성됨 — 링크 조건 일치
+            out += [f"> 디버거 리플레이(line-by-line 스텝 실행): [debug/step-{s.idx:02d}.html]"
+                    f"(debug/step-{s.idx:02d}.html)", ""]
         out += ["```", _slice_block(s.backend), "```", ""]
     if not appended:
         out += [f"({NO_EVIDENCE} — 백엔드 트레이스가 캡처된 스텝이 없다)", ""]
@@ -374,7 +375,7 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
             "<h2>수행 결과</h2>",
             "<table><tr><th>#</th><th>수행 내용</th><th>대상 요소</th><th>화면 전환</th>"
             "<th>판정</th><th>판정 근거</th><th>트레이스</th></tr>"]
-    for s, (verdict, basis) in zip(journey.steps, verdicts):
+    for s, (verdict, basis) in zip(journey.steps, verdicts, strict=True):
         badge = "pass" if verdict in ("성공",) else ("fail" if verdict == "실패" else "info")
         content = _ACTION_KO.get(s.action, s.action)
         if s.note:
@@ -400,6 +401,9 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
                     f"{_esc(s.backend.get('path'))}</code> ({s.backend.get('duration_ms')}ms)</h3>")
         if s.narrative:
             body.append(f"<p>{_esc(s.narrative)}</p>")
+        if s.backend.get("flow"):  # 리플레이 생성 조건과 일치 — 빈 링크 방지
+            body.append(f'<p><a href="debug/step-{s.idx:02d}.html">디버거 리플레이 '
+                        f'(line-by-line 스텝 실행)</a></p>')
         body.append(_slice_pre(s.backend))
     if not appended:
         body.append(f'<p class="footnote">{NO_EVIDENCE} — 백엔드 트레이스가 캡처된 스텝이 없다.</p>')

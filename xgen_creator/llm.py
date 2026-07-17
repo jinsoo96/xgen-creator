@@ -17,7 +17,7 @@ class LLMClient:
         self.timeout = timeout
 
     @classmethod
-    def from_env(cls, config: dict | None = None) -> "LLMClient | None":
+    def from_env(cls, config: dict | None = None) -> LLMClient | None:
         """설정/환경에 엔드포인트가 없으면 None — 서술 기능이 조용히 꺼진다."""
         config = config or {}
         base_url = (config.get("llm_base_url")

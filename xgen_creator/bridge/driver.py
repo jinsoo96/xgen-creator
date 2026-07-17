@@ -6,6 +6,7 @@ playwright는 optional extra(`pip install xgen-creator[bridge]`).
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -88,7 +89,7 @@ class BridgeSession:
         self._step_no = 0
 
     # -- 수명 ---------------------------------------------------------------
-    def __enter__(self) -> "BridgeSession":
+    def __enter__(self) -> BridgeSession:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:  # pragma: no cover
@@ -119,10 +120,8 @@ class BridgeSession:
             except Exception:
                 self.video_path = None
         for closer in (self._context.close, self._browser.close, self._pw.stop):
-            try:
+            with contextlib.suppress(Exception):
                 closer()
-            except Exception:
-                pass
 
     # -- 계획용 화면 요약 ----------------------------------------------------
     def outline(self, url: str | None = None, max_elements: int = 45) -> list[dict]:
@@ -135,10 +134,8 @@ class BridgeSession:
         if url is not None:
             page.goto(url if url.startswith("http") else self.base_url + url)
         for state in ("domcontentloaded", "networkidle"):
-            try:
+            with contextlib.suppress(Exception):
                 page.wait_for_load_state(state, timeout=6000)
-            except Exception:
-                pass
         for attempt in range(2):
             try:
                 return page.evaluate(_OUTLINE_JS, max_elements)
@@ -186,10 +183,9 @@ class BridgeSession:
             page.fill(selector, value or "")
         elif action == "press":
             page.press(selector, value or "Enter")
-        try:
+        # SPA 폴링 등으로 idle 미도달 가능 — 증거 수집은 계속
+        with contextlib.suppress(Exception):
             page.wait_for_load_state("networkidle", timeout=int(self.backend_wait * 1000))
-        except Exception:
-            pass  # SPA 폴링 등으로 idle 미도달 가능 — 증거 수집은 계속
         page.remove_listener("request", _on_request)  # 다음 스텝 증거 오염 방지
 
         shot = self.shot_dir / f"step-{self._step_no:02d}.png"

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 from .docgen.model import Journey, Step
 from .link.element import resolve_element
@@ -229,16 +229,13 @@ def _postprocess(config: dict, journey_path: Path, journey: Journey,
         outputs += report["outputs"]
         log(f"양식 {form}: {len(report['outputs'])}파일")
 
-    # 디버거 리플레이 — 백엔드 트레이스가 있는 스텝마다 line-by-line 열람 HTML
-    from .trace.store import TraceStore
+    # 디버거 리플레이 — 실행 흐름이 있는 스텝마다 line-by-line 열람 HTML.
+    # Step.backend가 곧 트레이스 payload이므로 이를 직접 써서 결과서 링크와 완전히 일치시킨다.
     from .docgen.debug_view import build_debug_view
-    store = TraceStore(config["trace_dir"])
     debug_dir = Path(resolved_out) / journey.id / "debug"
     debug_views: list[str] = []
     for step in journey.steps:
-        if not step.backend or not step.trace_id:
-            continue
-        payload = store.load(step.trace_id)
+        payload = step.backend
         if not payload or not payload.get("flow"):
             continue
         view = build_debug_view(payload, debug_dir / f"step-{step.idx:02d}.html",

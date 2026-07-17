@@ -19,3 +19,18 @@ creator = "xgen_creator.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["xgen_creator*"]
+
+[tool.ruff]
+line-length = 120        # 한글 로그·docstring 다수 — 100은 과도하게 빡빡
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# 콘솔·뷰어·라이브 스크린은 파이썬 문자열에 HTML/JS/CSS를 임베드한다 — 줄길이 규칙 제외
+"xgen_creator/web.py" = ["E501"]
+"xgen_creator/live.py" = ["E501"]
+"xgen_creator/docgen/debug_view.py" = ["E501"]
+# 데모 스크립트는 로컬 패키지 임포트 전 sys.path 설정이 필요 (E402 의도적)
+"examples/*.py" = ["E402"]

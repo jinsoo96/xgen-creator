@@ -57,5 +57,28 @@ class DebugViewTest(unittest.TestCase):
             self.assertTrue(out.exists())
 
 
+class DebugLinkConsistencyTest(unittest.TestCase):
+    """결과서의 리플레이 링크는 실제 생성되는 리플레이 파일과 1:1 일치해야 한다."""
+
+    def _report(self, backend):
+        from xgen_creator.docgen.forms import render_form
+        from xgen_creator.docgen.model import Journey, Step
+        journey = Journey(id="j", title="t", steps=[
+            Step(idx=1, action="click", selector="b", backend=backend)])
+        with tempfile.TemporaryDirectory() as tmp:
+            md, html = render_form(journey, "test-report", tmp)
+            return md.read_text(encoding="utf-8"), html.read_text(encoding="utf-8")
+
+    def test_backend_with_flow_gets_link(self):
+        md, html = self._report(PAYLOAD)
+        self.assertIn("debug/step-01.html", md)
+        self.assertIn("debug/step-01.html", html)
+
+    def test_backend_without_flow_has_no_link(self):
+        md, html = self._report(dict(PAYLOAD, flow=[]))
+        self.assertNotIn("debug/step-01.html", md)
+        self.assertNotIn("debug/step-01.html", html)
+
+
 if __name__ == "__main__":
     unittest.main()

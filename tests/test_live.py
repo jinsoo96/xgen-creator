@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_middleware import backend_app, run_request
+from test_middleware import backend_app
 from xgen_creator.live import LiveHub
 from xgen_creator.trace import CreatorTraceMiddleware
 from xgen_creator.trace.tracer import TraceEvent

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 
 async def _handle(reader, writer, app):
@@ -51,10 +52,8 @@ async def _handle(reader, writer, app):
     try:
         await app(scope, receive, send)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             writer.close()
-        except Exception:
-            pass
 
 
 def serve(app, port: int, host: str = "127.0.0.1") -> None:

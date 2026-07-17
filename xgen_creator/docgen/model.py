@@ -42,7 +42,7 @@ class Journey:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Journey":
+    def from_dict(cls, data: dict) -> Journey:
         steps = [Step(**s) for s in data.get("steps", [])]
         return cls(id=data["id"], title=data.get("title", data["id"]),
                    base_url=data.get("base_url", ""), created=data.get("created", ""),
@@ -57,5 +57,5 @@ class Journey:
         return path
 
     @classmethod
-    def load(cls, path: str | Path) -> "Journey":
+    def load(cls, path: str | Path) -> Journey:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

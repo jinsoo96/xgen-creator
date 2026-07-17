@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import runpy
 import sys
@@ -271,10 +272,8 @@ def _cmd_doctor(args, config) -> int:
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows 콘솔(cp949) 대비
         if hasattr(stream, "reconfigure"):
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 stream.reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError):
-                pass
     parser = argparse.ArgumentParser(prog="creator",
                                      description="XGEN CREATOR — 소스+실행 증거 기반 산출물 자동화")
     parser.add_argument("--config", default=None, help="creator.config.json 경로")

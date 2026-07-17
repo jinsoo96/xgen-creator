@@ -58,7 +58,7 @@ def main() -> int:
         b = clicked.backend
         print(f"\n[증명] 클릭 → {b['method']} {b['path']} → {b['status']} · "
               f"실행 파일 {len(b['files'])}개 · 라인이벤트 {b['event_count']}건")
-        for kind, file, line, func, depth in b["flow"][:12]:
+        for _kind, file, line, func, _depth in b["flow"][:12]:
             print(f"  {Path(file).name}:{line:<4} {func}")
         return 0
     print("\n[실패] 백엔드 트레이스 미확보 — 데모 서버가 떠 있는지 확인")
