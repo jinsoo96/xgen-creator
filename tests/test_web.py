@@ -25,8 +25,11 @@ def call(app, method="GET", path="/", body=b"", query=""):
     return status, payload
 
 
-def fake_make(config, log=print, **params):
+def fake_make(config, log=print, on_frame=None, **params):
     log("여정: fake (스텝 1개)")
+    if on_frame:  # 브리지가 넘기는 라이브 화면 프레임을 흉내
+        on_frame({"idx": 1, "action": "click", "url_before": "http://x/a",
+                  "url_after": "http://x/b", "shot": None})
     log("완료")
     return {"journey_id": "fake", "journey_path": "x", "outputs": [], "pdfs": [],
             "video": None, "narrated": False,
@@ -47,6 +50,37 @@ class ConsoleAppTest(unittest.TestCase):
             text = body.decode("utf-8")
             self.assertIn("산출물 만들어줘", text)
             self.assertIn("라이브 소스 스크린", text)
+            self.assertIn("라이브 화면", text)       # 화면 전환 스트리밍 패널
+            self.assertIn("산출물 갤러리", text)      # 게이트웨이 링크
+
+    def test_state_surfaces_live_frame(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self._app(tmp)
+            call(app, "POST", "/api/run", b"{}")
+            deadline = time.time() + 5
+            frame = None
+            while time.time() < deadline:
+                _, payload = call(app, path="/api/state")
+                state = json.loads(payload)
+                if state.get("frame"):
+                    frame = state["frame"]
+                if state["state"] == "done":
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(frame, "라이브 화면 프레임이 상태에 노출돼야 한다")
+            self.assertEqual(frame["url_after"], "http://x/b")
+            self.assertGreaterEqual(frame["seq"], 1)
+
+    def test_gallery_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "login-flow"
+            d.mkdir()
+            (d / "test-report.html").write_text("<h1>r</h1>", encoding="utf-8")
+            status, body = call(self._app(tmp), path="/gallery")
+            self.assertEqual(status, 200)
+            text = body.decode("utf-8")
+            self.assertIn("login-flow", text)
+            self.assertIn('href="/files/', text)  # 콘솔 파일 서빙 경로로 링크
 
     def test_run_then_state_reports_lines_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:

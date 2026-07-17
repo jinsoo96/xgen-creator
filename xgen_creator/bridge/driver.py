@@ -72,6 +72,7 @@ class BridgeSession:
         video_dir: str | Path | None = None,
         reroute: list[tuple[str, str]] | None = None,
         extra_headers: dict[str, str] | None = None,
+        on_frame=None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.store = TraceStore(trace_store) if isinstance(trace_store, str) else trace_store
@@ -83,6 +84,8 @@ class BridgeSession:
         # [(url glob 패턴, target_base)] — 매칭 요청을 사이드카 등으로 션트(레포 무수정 관측)
         self.reroute = reroute or []
         self.extra_headers = dict(extra_headers or {})  # identity 헤더 등, 매 스텝 병합
+        # 스텝마다 화면 프레임(스크린샷·URL)을 넘겨 라이브 화면 전환 스트리밍에 쓴다
+        self.on_frame = on_frame
         self._pw = None
         self._browser = None
         self._page = None
@@ -190,6 +193,11 @@ class BridgeSession:
 
         shot = self.shot_dir / f"step-{self._step_no:02d}.png"
         page.screenshot(path=str(shot), full_page=False)
+        if self.on_frame:  # 라이브 화면 전환 스트리밍 — 관측 실패가 수행을 깨면 안 된다
+            with contextlib.suppress(Exception):
+                self.on_frame({"idx": self._step_no, "action": action,
+                               "url_before": url_before, "url_after": page.url,
+                               "shot": str(shot)})
 
         element = None
         if selector and action != "goto":

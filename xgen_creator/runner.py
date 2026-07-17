@@ -40,7 +40,7 @@ def record_goal_journey(config: dict, goal: str, base_url: str | None = None,
                         journey_id: str = "goal", title: str | None = None,
                         headed: bool = False, max_turns: int = 8,
                         reroute: list | None = None, extra_headers: dict | None = None,
-                        pre_steps: str | Path | None = None,
+                        pre_steps: str | Path | None = None, on_frame=None,
                         log: Callable[[str], None] = print) -> Path:
     """멀티턴 관측 루프 — agent가 화면 변화를 보며 스텝을 스스로 밟는다.
 
@@ -64,7 +64,8 @@ def record_goal_journey(config: dict, goal: str, base_url: str | None = None,
     with BridgeSession(base_url, trace_store=config["trace_dir"],
                        shot_dir=journey_root / "shots", headless=not headed,
                        video_dir=journey_root / "video",
-                       reroute=reroute, extra_headers=extra_headers) as session:
+                       reroute=reroute, extra_headers=extra_headers,
+                       on_frame=on_frame) as session:
         pre_raws: list[dict] = []
         if pre_steps:
             for step_def in json.loads(Path(pre_steps).read_text(encoding="utf-8")):
@@ -132,7 +133,7 @@ def record_journey(config: dict, steps_path: str | Path,
                    base_url: str | None = None, journey_id: str | None = None,
                    title: str | None = None, headed: bool = False,
                    video: bool = True, reroute: list | None = None,
-                   extra_headers: dict | None = None,
+                   extra_headers: dict | None = None, on_frame=None,
                    log: Callable[[str], None] = print) -> Path:
     """스텝 정의 JSON을 브리지로 실행해 여정 JSON 경로를 반환. (playwright 필요)"""
     from .bridge.driver import BridgeSession  # optional 의존 — 지연 임포트
@@ -149,7 +150,8 @@ def record_journey(config: dict, steps_path: str | Path,
     with BridgeSession(base_url, trace_store=config["trace_dir"],
                        shot_dir=journey_root / "shots", headless=not headed,
                        video_dir=(journey_root / "video") if video else None,
-                       reroute=reroute, extra_headers=extra_headers) as session:
+                       reroute=reroute, extra_headers=extra_headers,
+                       on_frame=on_frame) as session:
         for step_def in steps_def:
             raw = session.step(**step_def)
             if raw.get("element"):
@@ -172,18 +174,19 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
              journey_id: str | None = None, title: str | None = None,
              headed: bool = False, narrate: bool = True, pdf: bool = False,
              out_dir: str | None = None, reroute: list | None = None,
-             goal: str | None = None, pre_steps: str | None = None,
+             goal: str | None = None, pre_steps: str | None = None, on_frame=None,
              log: Callable[[str], None] = print) -> dict:
     """원샷 파이프라인. 반환: {journey_id, outputs, pdfs, video, narrated, steps}
 
     goal(자연어)이 주어지면 agent 모델이 멀티턴 관측 루프로 직접 브라우저를 몬다
-    ("AI가 버튼을 누른다" — 보고→행동→다시 보고).
+    ("AI가 버튼을 누른다" — 보고→행동→다시 보고). on_frame은 스텝마다 화면 프레임을
+    받아 라이브 화면 전환 스트리밍에 쓴다.
     """
     if goal and not steps:
         journey_path = record_goal_journey(
             config, goal, base_url=base_url, journey_id=journey_id or "goal",
             title=title, headed=headed, reroute=reroute,
-            pre_steps=pre_steps, log=log)
+            pre_steps=pre_steps, on_frame=on_frame, log=log)
         steps = None  # 루프가 여정까지 만들었다 — 아래 최신 여정 탐색을 건너뛰게
         journey = Journey.load(journey_path)
         log(f"여정: {journey.id} (스텝 {len(journey.steps)}개)")
@@ -191,7 +194,8 @@ def run_make(config: dict, steps: str | None = None, base_url: str | None = None
     if steps:
         journey_path = record_journey(config, steps, base_url=base_url,
                                       journey_id=journey_id, title=title,
-                                      headed=headed, reroute=reroute, log=log)
+                                      headed=headed, reroute=reroute,
+                                      on_frame=on_frame, log=log)
     else:
         candidates = sorted(journey_files(config["journey_dir"]),
                             key=lambda p: p.stat().st_mtime, reverse=True)

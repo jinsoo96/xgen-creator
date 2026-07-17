@@ -26,11 +26,19 @@ class MakeJob:
         self.lines: list[str] = []
         self.result: dict | None = None
         self.error: str | None = None
+        self.frame: dict | None = None  # 최신 화면 프레임 (라이브 화면 전환 스트리밍)
+        self.frame_seq = 0
         self._lock = threading.Lock()
 
     def log(self, message: str) -> None:
         with self._lock:
             self.lines.append(f"[{time.strftime('%H:%M:%S')}] {message}")
+
+    def add_frame(self, frame: dict) -> None:
+        """브리지가 스텝마다 넘기는 화면 프레임 — 워커 스레드에서 호출된다."""
+        with self._lock:
+            self.frame_seq += 1
+            self.frame = frame
 
 
 class ConsoleApp:
@@ -56,7 +64,8 @@ class ConsoleApp:
                     journey_id=params.get("id") or None,
                     title=params.get("title") or None,
                     narrate=bool(params.get("narrate", True)),
-                    pdf=bool(params.get("pdf", False)), log=job.log)
+                    pdf=bool(params.get("pdf", False)),
+                    on_frame=job.add_frame, log=job.log)
                 job.state = "done"
             except Exception as exc:
                 job.error = f"{type(exc).__name__}: {exc}"
@@ -103,9 +112,15 @@ class ConsoleApp:
             result["files"] = files
             for step in result.get("steps", []):
                 step["shot_url"] = self._rel_media(step.get("screenshot"))
+        frame = None
+        if job.frame:
+            frame = {"seq": job.frame_seq, "action": job.frame.get("action"),
+                     "url_after": job.frame.get("url_after"),
+                     "url_before": job.frame.get("url_before"),
+                     "shot_url": self._rel_media(job.frame.get("shot"))}
         return {"state": job.state, "error": job.error,
                 "lines": job.lines[since:], "line_total": len(job.lines),
-                "result": result}
+                "frame": frame, "result": result}
 
     # -- ASGI ----------------------------------------------------------------
     async def __call__(self, scope, receive, send):
@@ -125,6 +140,15 @@ class ConsoleApp:
 
         if path == "/":
             return await reply(self._page().encode("utf-8"))
+        if path == "/gallery":  # 게이트웨이 — 산출물 인덱스를 콘솔이 직접 서빙
+            from .docgen.index_page import build_index
+            out_dir = Path(self.config["out_dir"])
+            if not out_dir.exists():
+                return await reply("아직 산출물이 없습니다.".encode())
+            index = build_index(out_dir)
+            html = index.read_text(encoding="utf-8").replace(
+                'href="', 'href="/files/')  # 상대링크를 콘솔의 파일 서빙 경로로
+            return await reply(html.encode("utf-8"))
         if path == "/api/state":
             return await reply(json.dumps(
                 self._state_payload(int(query.get("since", 0))),
@@ -183,11 +207,21 @@ main { flex:1; display:grid; grid-template-columns:400px 1fr 1fr; grid-template-
 .panel > h2 { flex:none; font-size:13px; font-weight:600; color:#6cb6ff; letter-spacing:1.5px;
               padding:12px 18px 10px; border-bottom:1px solid #16202e; }
 .panel .body { flex:1; overflow-y:auto; padding:14px 18px; min-height:0; }
-#run-panel { grid-row:1; grid-column:1; }
-#timeline  { grid-row:2; grid-column:1; }
-#logs      { grid-row:1; grid-column:2 / 4; }
-#live      { grid-row:2; grid-column:2; }
-#outputs   { grid-row:2; grid-column:3; }
+#run-panel   { grid-row:1; grid-column:1; }
+#timeline    { grid-row:2; grid-column:1; }
+#logs        { grid-row:1; grid-column:2; }
+#live-screen { grid-row:1; grid-column:3; }
+#live        { grid-row:2; grid-column:2; }
+#outputs     { grid-row:2; grid-column:3; }
+#ls-body { display:flex; flex-direction:column; }
+#ls-img { width:100%; flex:1; object-fit:contain; background:#05080d; min-height:0; }
+#ls-url { flex:none; font-family:Consolas,monospace; font-size:11px; color:#8a97a8;
+          padding:8px 14px; border-top:1px solid #16202e; white-space:nowrap; overflow:hidden;
+          text-overflow:ellipsis; }
+#ls-url b { color:#7ee787; }
+header a.gallery { margin-left:16px; color:#6cb6ff; text-decoration:none; font-size:14px;
+                   border:1px solid #2b3d55; border-radius:8px; padding:5px 14px; }
+header a.gallery:hover { border-color:#6cb6ff; }
 label { display:block; font-size:13px; color:#8a97a8; margin:14px 0 6px; }
 select, input { width:100%; background:#111b2a; color:#d8e2ef; border:1px solid #2b3d55;
          border-radius:8px; padding:10px 12px; font-size:14px; }
@@ -219,6 +253,7 @@ iframe { width:100%; height:100%; border:0; background:#0a0f16; }
 <header>
   <div class="logo"><em>XGEN</em> CREATOR 콘솔</div>
   <div class="target" id="target"></div>
+  <a class="gallery" href="/gallery" target="_blank">산출물 갤러리 ↗</a>
   <div class="badge" id="badge">대기</div>
 </header>
 <main>
@@ -240,6 +275,12 @@ iframe { width:100%; height:100%; border:0; background:#0a0f16; }
   </div>
   <div class="panel" id="timeline"><h2>스텝 타임라인</h2><div class="body" id="tl-body"><div class="empty">실행하면 스텝이 차오른다</div></div></div>
   <div class="panel" id="logs"><h2>실행 로그</h2><div class="body" id="log-body"></div></div>
+  <div class="panel" id="live-screen"><h2>라이브 화면 — AI가 지금 보는 브라우저</h2>
+    <div class="body" style="padding:0" id="ls-body">
+      <img id="ls-img" style="display:none" alt="live screen">
+      <div class="empty" id="ls-empty" style="padding:14px 18px">실행하면 화면이 흐른다</div>
+      <div id="ls-url" style="display:none"></div>
+    </div></div>
   <div class="panel" id="live"><h2>라이브 소스 스크린 — 지금 도는 백엔드 라인</h2><iframe id="live-frame"></iframe></div>
   <div class="panel" id="outputs"><h2>산출물</h2><div class="body" id="out-body"><div class="empty">아직 없음</div></div></div>
 </main>
@@ -252,17 +293,20 @@ for (const s of BOOT.steps_options) {
   const o = document.createElement("option"); o.value = s; o.textContent = "신규 수행: " + s;
   sel.appendChild(o);
 }
-let since = 0, timer = null;
+let since = 0, timer = null, lastFrameSeq = 0;
 const badge = document.getElementById("badge");
 function setBadge(state) {
   badge.className = "badge " + state;
   badge.textContent = {running:"실행 중", done:"완료", error:"오류", idle:"대기"}[state] || state;
 }
 document.getElementById("go").onclick = async () => {
-  since = 0;
+  since = 0; lastFrameSeq = 0;
   document.getElementById("log-body").textContent = "";
   document.getElementById("tl-body").innerHTML = '<div class="empty">수행 중…</div>';
   document.getElementById("out-body").innerHTML = '<div class="empty">생성 중…</div>';
+  document.getElementById("ls-img").style.display = "none";
+  document.getElementById("ls-empty").style.display = "block";
+  document.getElementById("ls-url").style.display = "none";
   await fetch("/api/run", { method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({ goal: document.getElementById("goal").value, steps: sel.value,
                            narrate: document.getElementById("narrate").checked,
@@ -284,6 +328,17 @@ async function poll() {
     }
     since = s.line_total;
     el.parentElement.scrollTop = el.parentElement.scrollHeight;
+  }
+  if (s.frame && s.frame.shot_url && s.frame.seq !== lastFrameSeq) {
+    lastFrameSeq = s.frame.seq;
+    const img = document.getElementById("ls-img");
+    img.src = s.frame.shot_url + "?seq=" + s.frame.seq;   // 캐시 무시하고 최신 화면
+    img.style.display = "block";
+    document.getElementById("ls-empty").style.display = "none";
+    const u = document.getElementById("ls-url"); u.style.display = "block";
+    const t = (s.frame.url_before !== s.frame.url_after)
+      ? (s.frame.url_before + "  →  ") : "";
+    u.innerHTML = "스텝 " + s.frame.seq + " · " + t + "<b>" + (s.frame.url_after || "") + "</b>";
   }
   if (s.result) renderResult(s.result);
   if (s.state === "done" || s.state === "error") {
