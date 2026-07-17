@@ -163,8 +163,13 @@ def _test_report_md(journey: Journey) -> str:
         if not s.backend:
             continue
         appended = True
+        note = ""
+        if s.backend.get("timed_out"):
+            note = " · ⚠ 시간 예산 초과로 실행 일부만 캡처(잘림)"
+        elif s.backend.get("truncated"):
+            note = " · ⚠ 이벤트 상한 초과로 잘림"
         out += [f"### 스텝 {s.idx} — {s.backend.get('method')} {s.backend.get('path')}"
-                f" ({s.backend.get('duration_ms')}ms)", ""]
+                f" ({s.backend.get('duration_ms')}ms){note}", ""]
         if s.narrative:
             out += [s.narrative, ""]
         if s.backend.get("flow"):  # 리플레이는 실행 흐름이 있을 때만 생성됨 — 링크 조건 일치
@@ -397,8 +402,14 @@ def _test_report_html(journey: Journey, embed_shots: bool = True) -> str:
         if not s.backend:
             continue
         appended = True
+        note = ""
+        if s.backend.get("timed_out"):
+            note = " · ⚠ 시간 예산 초과로 실행 일부만 캡처(잘림)"
+        elif s.backend.get("truncated"):
+            note = " · ⚠ 이벤트 상한 초과로 잘림"
         body.append(f"<h3>스텝 {s.idx} — <code>{_esc(s.backend.get('method'))} "
-                    f"{_esc(s.backend.get('path'))}</code> ({s.backend.get('duration_ms')}ms)</h3>")
+                    f"{_esc(s.backend.get('path'))}</code> "
+                    f"({s.backend.get('duration_ms')}ms){_esc(note)}</h3>")
         if s.narrative:
             body.append(f"<p>{_esc(s.narrative)}</p>")
         if s.backend.get("flow"):  # 리플레이 생성 조건과 일치 — 빈 링크 방지

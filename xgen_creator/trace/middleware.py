@@ -32,6 +32,7 @@ class CreatorTraceMiddleware:
         context: int = 2,
         flow_limit: int = 5000,
         slice_files_limit: int = 30,
+        max_seconds: float = 10.0,
         live_hub=None,
     ) -> None:
         self.app = app
@@ -41,6 +42,7 @@ class CreatorTraceMiddleware:
         self.context = context
         self.flow_limit = flow_limit
         self.slice_files_limit = slice_files_limit  # 거대 트레이스가 루프를 막지 않게
+        self.max_seconds = max_seconds  # 벽시계 예산 — 큰 핸들러가 요청을 행시키지 않게
         self.live_hub = live_hub  # live.LiveHub — 이벤트를 SSE 구독자에 실시간 송출
 
     @staticmethod
@@ -65,7 +67,8 @@ class CreatorTraceMiddleware:
             await send(message)
 
         on_event = self.live_hub.publish if self.live_hub is not None else None
-        tracer = LineTracer(self.roots, max_events=self.max_events, on_event=on_event)
+        tracer = LineTracer(self.roots, max_events=self.max_events, on_event=on_event,
+                            max_seconds=self.max_seconds)
         wait_start = time.perf_counter()
         with self._lock:
             lock_wait_ms = round((time.perf_counter() - wait_start) * 1000, 2)
@@ -94,6 +97,7 @@ class CreatorTraceMiddleware:
                     "duration_ms": duration_ms,
                     "lock_wait_ms": lock_wait_ms,
                     "truncated": result.truncated,
+                    "timed_out": tracer.timed_out,  # 벽시계 예산 초과로 잘렸는지 정직 표기
                     "event_count": len(result.events),
                     "file_count": len(files),
                     "slices_omitted_files": max(0, len(files) - len(sliced)),

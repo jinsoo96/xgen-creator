@@ -69,6 +69,28 @@ class TracerTest(unittest.TestCase):
         tracer.stop()
         self.assertEqual(len(seen), len(tracer.result.events))
 
+    def test_wall_clock_budget_stops_tracing(self):
+        """벽시계 예산 초과 시 트레이싱이 멈춰 대상이 행되지 않아야 한다.
+
+        Windows monotonic 해상도(~15ms) 대비 넉넉히 큰 작업 + 작은 예산으로 결정적 검증.
+        """
+        tracer = LineTracer([TESTS_DIR], max_seconds=0.02)
+        tracer.start()
+        fixture_target.helper(400_000)  # 예산(20ms) 안에 다 못 도는 큰 작업
+        result = tracer.stop()
+        self.assertTrue(tracer.timed_out, "예산 초과가 감지돼야 한다")
+        self.assertTrue(result.truncated)
+        self.assertLess(len(result.events), 800_000, "예산으로 전량 캡처 전에 멈춰야 한다")
+
+    def test_no_budget_traces_all(self):
+        tracer = LineTracer([TESTS_DIR])  # max_seconds None
+        tracer.start()
+        fixture_target.helper(50)
+        result = tracer.stop()
+        self.assertFalse(tracer.timed_out)
+        self.assertFalse(result.truncated)
+        self.assertGreater(len(result.events), 0)
+
     def test_monitoring_backend_parity(self):
         import sys
         if not hasattr(sys, "monitoring"):

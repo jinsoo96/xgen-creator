@@ -7,6 +7,7 @@ playwright는 optional extra(`pip install xgen-creator[bridge]`).
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -61,6 +62,23 @@ def swap_base(url: str, target_base: str) -> str:
     return base + parts.path + (f"?{parts.query}" if parts.query else "")
 
 
+def reroute_matcher(pattern: str):
+    """리라우트 URL 매처 — 쿼리스트링을 무시하고 경로에 글롭을 적용한다.
+
+    Playwright 기본 글롭은 `?include_disabled=true` 같은 쿼리가 붙으면 매칭이 깨져
+    요청이 사이드카로 안 가고 조용히 실서버로 새는 결함이 있었다. 쿼리를 떼고
+    fnmatch로 대조해 그 함정을 없앤다.
+    """
+    glob = pattern.replace("**", "*")
+
+    def match(url: str) -> bool:
+        parts = urlsplit(url)
+        stripped = f"{parts.scheme}://{parts.netloc}{parts.path}"
+        return fnmatch.fnmatch(stripped, glob)
+
+    return match
+
+
 class BridgeSession:
     def __init__(
         self,
@@ -111,7 +129,7 @@ class BridgeSession:
         for pattern, target_base in self.reroute:
             def _shunt(route, request, _tb=target_base):
                 route.continue_(url=swap_base(request.url, _tb))
-            self._context.route(pattern, _shunt)
+            self._context.route(reroute_matcher(pattern), _shunt)
         self._page = self._context.new_page()
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         return self

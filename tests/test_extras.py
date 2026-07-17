@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from test_docgen import make_journey
-from xgen_creator.bridge.driver import swap_base
+from xgen_creator.bridge.driver import reroute_matcher, swap_base
 from xgen_creator.docgen.narrate import narrate_journey
 from xgen_creator.docgen.pdf import find_edge, html_to_pdf
 from xgen_creator.llm import LLMClient
@@ -60,6 +60,18 @@ class RerouteTest(unittest.TestCase):
             swap_base("http://localhost:8080/api/workflow/list?page=2",
                       "http://127.0.0.1:8201/"),
             "http://127.0.0.1:8201/api/workflow/list?page=2")
+
+    def test_matcher_ignores_query_string(self):
+        """실 XGEN에서 조용히 샜던 결함 회귀 — 쿼리 붙은 URL도 매칭돼야 한다."""
+        m = reroute_matcher("**/api/node/**")
+        self.assertTrue(m("http://localhost:3100/api/node/get?include_disabled=true"))
+        self.assertTrue(m("http://localhost:3100/api/node/get"))
+        self.assertFalse(m("http://localhost:3100/api/workflow/list"))
+
+    def test_matcher_segment_glob(self):
+        m = reroute_matcher("**/api/canvas/*")
+        self.assertTrue(m("http://x:3100/api/canvas/save?id=1"))
+        self.assertFalse(m("http://x:3100/api/other/save"))
 
 
 class SidecarLoadTest(unittest.TestCase):

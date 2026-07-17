@@ -9,10 +9,11 @@ on_event 콜백으로 라이브 스트리밍(SSE 등)에 연결할 수 있다.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import threading
-import contextlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -69,11 +70,17 @@ class LineTracer:
         max_events: int = 200_000,
         record_calls: bool = False,
         backend: str = "auto",  # auto | monitoring | settrace
+        max_seconds: float | None = None,
     ) -> None:
         self.roots = [os.path.normcase(os.path.abspath(r)) for r in roots if r]
         self.on_event = on_event
         self.max_events = max_events
         self.record_calls = record_calls
+        # 벽시계 예산 — 아무리 큰 핸들러라도 이 시간이 지나면 트레이싱을 멈춰
+        # 요청이 완료되게 한다(관측이 대상을 행시키지 않도록). None이면 미적용.
+        self.max_seconds = max_seconds
+        self._deadline: float | None = None
+        self.timed_out = False
         monitoring_ok = hasattr(sys, "monitoring")
         if backend == "auto":
             backend = "monitoring" if monitoring_ok else "settrace"
@@ -105,8 +112,15 @@ class LineTracer:
 
     # -- trace 콜백 ----------------------------------------------------------
     def _record(self, ev: TraceEvent) -> None:
-        if len(self.result.events) >= self.max_events:
+        n = len(self.result.events)
+        if n >= self.max_events:
             self.result.truncated = True
+            self._active = False
+            return
+        # 벽시계 예산 초과 시 즉시 중단 (512 이벤트마다 검사 — 시계 오버헤드 최소화)
+        if self._deadline is not None and n % 512 == 0 and time.monotonic() > self._deadline:
+            self.result.truncated = True
+            self.timed_out = True
             self._active = False
             return
         self.result.events.append(ev)
@@ -206,6 +220,8 @@ class LineTracer:
     # -- 수명 ---------------------------------------------------------------
     def start(self) -> None:
         self._active = True
+        if self.max_seconds is not None:
+            self._deadline = time.monotonic() + self.max_seconds
         if self.backend == "monitoring" and self._start_monitoring():
             return
         self.backend = "settrace"
