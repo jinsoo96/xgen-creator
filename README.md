@@ -153,7 +153,10 @@ creator roles                              # 모델 역할 (agent / source)
 ## 개발
 
 ```bash
-python -m unittest discover -s tests -v
+pip install -e .                        # 테스트 전 1회 (xgen_creator 임포트)
+pytest -q                               # 어디서 실행하든 통과 (conftest가 경로 부트스트랩)
+python -m unittest discover -s tests    # 설치 후 동등
+ruff check .                            # 정적 검사 (설정은 pyproject)
 ```
 
 ## 형제 프로젝트
