@@ -11,3 +11,23 @@ def helper(n):
 def untouched():
     marker = "실행되지 않는 함수"
     return marker
+
+
+def _raiser():
+    raise ValueError("boom")
+
+
+def with_exception():
+    """예외 unwind 후 콜스택 깊이가 부풀지 않아야 함 — 회귀 대상."""
+    try:  # noqa: SIM105 — 예외 unwind 프레임을 실제로 만들어 depth 검증
+        _raiser()
+    except ValueError:
+        pass
+    after = 1  # 이 라인은 with_exception 깊이여야(raiser 깊이 아님)
+    return after
+
+
+def outer_after_exc():
+    a = 0
+    b = with_exception()   # 이 라인들은 outer 깊이 — 예외 후 부풀면 안 됨
+    return a + b

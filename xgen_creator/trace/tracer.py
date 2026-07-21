@@ -248,6 +248,13 @@ class LineTracer:
             self._depth = max(0, self._depth - 1)
         return None
 
+    def _mon_unwind(self, code, offset, exc):
+        # 예외로 함수가 빠져나갈 때 — PY_RETURN은 안 불리므로 여기서 깊이를 줄여야
+        # 예외 이후 콜스택이 부풀지 않는다.
+        if self._scoped(code.co_filename) is not None:
+            self._depth = max(0, self._depth - 1)
+        return None
+
     def _start_monitoring(self) -> bool:
         mon = sys.monitoring
         for candidate in range(6):
@@ -259,10 +266,12 @@ class LineTracer:
                 continue
         if self._tool_id is None:
             return False  # 도구 슬롯 소진 — settrace 폴백
-        events = mon.events.LINE | mon.events.PY_START | mon.events.PY_RETURN
+        events = (mon.events.LINE | mon.events.PY_START
+                  | mon.events.PY_RETURN | mon.events.PY_UNWIND)
         mon.register_callback(self._tool_id, mon.events.LINE, self._mon_line)
         mon.register_callback(self._tool_id, mon.events.PY_START, self._mon_start)
         mon.register_callback(self._tool_id, mon.events.PY_RETURN, self._mon_return)
+        mon.register_callback(self._tool_id, mon.events.PY_UNWIND, self._mon_unwind)
         mon.set_events(self._tool_id, events)
         mon.restart_events()  # 이전 세션의 DISABLE 잔재 해제
         return True
@@ -270,7 +279,8 @@ class LineTracer:
     def _stop_monitoring(self) -> None:
         mon = sys.monitoring
         mon.set_events(self._tool_id, 0)
-        for event in (mon.events.LINE, mon.events.PY_START, mon.events.PY_RETURN):
+        for event in (mon.events.LINE, mon.events.PY_START,
+                      mon.events.PY_RETURN, mon.events.PY_UNWIND):
             mon.register_callback(self._tool_id, event, None)
         mon.free_tool_id(self._tool_id)
         self._tool_id = None

@@ -130,6 +130,25 @@ class TracerTest(unittest.TestCase):
         self.assertGreater(len(target_evs), 20,
                            "여러 스레드의 실행이 모두 캡처돼야 한다")
 
+    def test_exception_unwind_depth_both_backends(self):
+        """예외로 함수가 빠져나간 뒤 콜스택 깊이가 부풀지 않아야 한다 (디버거 스택 정확도)."""
+        import sys
+        backends = ["settrace"] + (["monitoring"] if hasattr(sys, "monitoring") else [])
+        for backend in backends:
+            tracer = LineTracer([TESTS_DIR], backend=backend)
+            tracer.start()
+            fixture_target.outer_after_exc()
+            result = tracer.stop()
+            evs = [e for e in result.events if e.kind == "line"]
+            outer = [e.depth for e in evs if e.func == "outer_after_exc"]
+            wexc = [e.depth for e in evs if e.func == "with_exception"]
+            self.assertEqual(len(set(outer)), 1,
+                             f"{backend}: outer 라인 depth 일관 실패 {outer}")
+            self.assertEqual(len(set(wexc)), 1,
+                             f"{backend}: 예외 후 with_exception depth 일관 실패 {wexc}")
+            self.assertEqual(min(wexc), min(outer) + 1,
+                             f"{backend}: with_exception이 outer보다 한 단계 깊어야")
+
     def test_monitoring_backend_parity(self):
         import sys
         if not hasattr(sys, "monitoring"):
