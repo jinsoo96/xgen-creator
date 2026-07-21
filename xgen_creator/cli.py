@@ -22,7 +22,7 @@ from .trace.tracer import LineTracer
 def _cmd_trace_run(args, config) -> int:
     """python 스크립트를 트레이서 아래서 실행하고 실행 슬라이스를 출력한다."""
     roots = args.roots or config.get("backend_roots") or [str(Path(args.script).resolve().parent)]
-    tracer = LineTracer(roots, max_events=args.max_events)
+    tracer = LineTracer(roots, max_events=args.max_events, capture_vars=args.capture_vars)
     tracer.start()
     try:
         runpy.run_path(args.script, run_name="__main__")
@@ -30,6 +30,11 @@ def _cmd_trace_run(args, config) -> int:
         result = tracer.stop()
     files = result.executed_lines()
     print(render_slices_text(build_slices(files, context=args.context)))
+    if args.capture_vars:  # 실행 순서 + 변수값 (data flow)
+        print("\n--- data flow (실행 순서·변수값) ---")
+        for _kind, f, ln, func, _depth, snap in result.flow(args.flow_limit):
+            var = ("  " + ", ".join(f"{k}={v}" for k, v in snap.items())) if snap else ""
+            print(f"  {Path(f).name}:{ln} {func}(){var}")
     print(f"이벤트 {len(result.events)}건, 파일 {len(files)}개"
           + (" (truncated)" if result.truncated else ""))
     return 0
@@ -177,7 +182,7 @@ def _cmd_sidecar(args, config) -> int:
                 roots=args.roots or config.get("backend_roots") or [args.dir],
                 trace_dir=args.trace_dir or config["trace_dir"],
                 max_events=args.max_events, max_seconds=args.max_seconds,
-                live_hub=live_hub)
+                capture_vars=args.capture_vars, live_hub=live_hub)
     return 0
 
 
@@ -288,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--roots", nargs="*", default=None)
     p_run.add_argument("--context", type=int, default=2)
     p_run.add_argument("--max-events", type=int, default=200_000)
+    p_run.add_argument("--capture-vars", action="store_true",
+                       help="라인별 지역변수 값도 출력 (data flow)")
+    p_run.add_argument("--flow-limit", type=int, default=200)
 
     p = sub.add_parser("record", help="브라우저 여정 기록 (playwright)")
     p.add_argument("--steps", required=True, help="스텝 정의 JSON")
@@ -347,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="요청당 라인이벤트 상한 (대형 앱 보호, 기본 50000)")
     p.add_argument("--max-seconds", type=float, default=6.0,
                    help="요청당 트레이싱 벽시계 예산(초) — 초과 시 중단해 행 방지 (기본 6)")
+    p.add_argument("--capture-vars", action="store_true",
+                   help="라인별 지역변수 값 스냅샷(data flow) — 오버헤드 증가, 디버뷰에 값 표시")
     p.add_argument("--live", action="store_true", help="라이브 소스스크린 허브 장착")
 
     p = sub.add_parser("doc", help="산출물")

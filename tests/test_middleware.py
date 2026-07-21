@@ -29,6 +29,34 @@ def run_request(app, headers):
     return sent
 
 
+class ConcurrencyTest(unittest.TestCase):
+    def test_second_concurrent_trace_is_nonblocking_and_honest(self):
+        """이미 트레이스 진행 중이면 두 번째는 막지 않고(논블로킹) 관측 생략·정직 표기."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app = CreatorTraceMiddleware(backend_app, roots=[TESTS_DIR], trace_dir=tmp)
+            app._lock.acquire()  # 다른 요청이 트레이스 중인 상황을 흉내
+            try:
+                sent = run_request(app, [(b"x-creator-trace", b"t-concurrent")])
+                self.assertEqual(sent[0]["status"], 200, "요청은 막히지 않고 정상 응답")
+            finally:
+                app._lock.release()
+            payload = TraceStore(tmp).load("t-concurrent")
+            self.assertIsNotNone(payload)
+            self.assertEqual(payload["skipped"], "동시 트레이스 진행 중 — 관측 생략")
+            self.assertEqual(payload["event_count"], 0)
+
+    def test_capture_vars_records_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = CreatorTraceMiddleware(backend_app, roots=[TESTS_DIR], trace_dir=tmp,
+                                         capture_vars=True)
+            run_request(app, [(b"x-creator-trace", b"t-vars")])
+            payload = TraceStore(tmp).load("t-vars")
+            # flow 6-튜플: [kind, file, line, func, depth, vars] — helper 내부 변수값이 있어야
+            var_rows = [r for r in payload["flow"]
+                        if len(r) > 5 and r[5] and "total" in r[5]]
+            self.assertTrue(var_rows, "라인별 지역변수 값이 flow에 담겨야 한다")
+
+
 class MiddlewareTest(unittest.TestCase):
     def test_traced_request_saves_correlated_payload(self):
         with tempfile.TemporaryDirectory() as tmp:

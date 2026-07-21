@@ -91,6 +91,45 @@ class TracerTest(unittest.TestCase):
         self.assertFalse(result.truncated)
         self.assertGreater(len(result.events), 0)
 
+    def test_capture_vars_records_line_values(self):
+        """data flow — 라인마다 지역변수 값이 스냅샷돼야 한다."""
+        result = self._trace(fixture_target.helper, 3, capture_vars=True)
+        line_evs = [e for e in result.events
+                    if e.kind == "line" and e.file.endswith("fixture_target.py")]
+        with_vars = [e for e in line_evs if e.vars]
+        self.assertTrue(with_vars, "변수 스냅샷이 있어야 한다")
+        # total = 0 라인 실행 후엔 n 값이 보여야 하고, 루프 진행에 따라 total이 변한다
+        totals = [e.vars.get("total") for e in with_vars if e.vars and "total" in e.vars]
+        self.assertIn("0", totals)
+        self.assertIn("3", totals)  # 0+1+2 = 3 누적
+
+    def test_no_capture_vars_by_default(self):
+        result = self._trace(fixture_target.helper, 2)
+        self.assertTrue(all(e.vars is None for e in result.events))
+
+    def test_multithread_capture_and_thread_local_depth(self):
+        """monitoring은 전 스레드를 커버 — 여러 스레드 실행이 잡히고 깊이는 스레드별로 독립."""
+        import threading
+        seen = []
+
+        def worker():
+            fixture_target.helper(3)
+
+        tracer = LineTracer([TESTS_DIR])
+        tracer.start()
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        fixture_target.helper(3)  # 메인 스레드도
+        result = tracer.stop()
+        del seen
+        target_evs = [e for e in result.events if e.file.endswith("fixture_target.py")]
+        # 4개 실행(스레드 3 + 메인 1) × 9라인 ≈ 36 — 스레드 실행이 유실 없이 잡혀야
+        self.assertGreater(len(target_evs), 20,
+                           "여러 스레드의 실행이 모두 캡처돼야 한다")
+
     def test_monitoring_backend_parity(self):
         import sys
         if not hasattr(sys, "monitoring"):

@@ -33,6 +33,7 @@ class CreatorTraceMiddleware:
         flow_limit: int = 5000,
         slice_files_limit: int = 30,
         max_seconds: float = 10.0,
+        capture_vars: bool = False,
         live_hub=None,
     ) -> None:
         self.app = app
@@ -43,6 +44,7 @@ class CreatorTraceMiddleware:
         self.flow_limit = flow_limit
         self.slice_files_limit = slice_files_limit  # 거대 트레이스가 루프를 막지 않게
         self.max_seconds = max_seconds  # 벽시계 예산 — 큰 핸들러가 요청을 행시키지 않게
+        self.capture_vars = capture_vars  # 라인별 변수값 스냅샷(data flow) — opt-in
         self.live_hub = live_hub  # live.LiveHub — 이벤트를 SSE 구독자에 실시간 송출
 
     @staticmethod
@@ -66,12 +68,31 @@ class CreatorTraceMiddleware:
                 status_holder["status"] = message["status"]
             await send(message)
 
+        # 동시성: 논블로킹 — 이미 트레이스가 진행 중이면 막지 않고(행 연쇄 방지)
+        # 이 요청은 관측을 생략하고 통과시킨다. 사유를 정직하게 남긴다.
+        if not self._lock.acquire(blocking=False):
+            error_repr = None
+            try:
+                await self.app(scope, receive, send_wrap)
+            except BaseException as exc:
+                error_repr = repr(exc)
+                raise
+            finally:
+                with contextlib.suppress(OSError):
+                    self.store.save(trace_id, {
+                        "trace_id": trace_id, "method": scope.get("method"),
+                        "path": scope.get("path"), "status": status_holder.get("status"),
+                        "error": error_repr, "skipped": "동시 트레이스 진행 중 — 관측 생략",
+                        "duration_ms": None, "truncated": False, "timed_out": False,
+                        "event_count": 0, "file_count": 0, "files": {}, "flow": [],
+                        "slices": []})
+            return
+
         on_event = self.live_hub.publish if self.live_hub is not None else None
         tracer = LineTracer(self.roots, max_events=self.max_events, on_event=on_event,
-                            max_seconds=self.max_seconds)
-        wait_start = time.perf_counter()
-        with self._lock:
-            lock_wait_ms = round((time.perf_counter() - wait_start) * 1000, 2)
+                            max_seconds=self.max_seconds, capture_vars=self.capture_vars)
+        try:
+            lock_wait_ms = 0.0
             run_start = time.perf_counter()
             error_repr = None
             tracer.start()
@@ -108,3 +129,5 @@ class CreatorTraceMiddleware:
                 }
                 with contextlib.suppress(OSError):
                     self.store.save(trace_id, payload)
+        finally:
+            self._lock.release()  # 논블로킹 락 반드시 반환

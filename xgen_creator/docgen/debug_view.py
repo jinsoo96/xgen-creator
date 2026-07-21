@@ -25,9 +25,16 @@ def _source_map(payload: dict) -> dict[str, dict[str, str]]:
 def build_debug_view(payload: dict, out_path: str | Path,
                      title: str | None = None) -> Path:
     """트레이스 payload → 디버거 리플레이 HTML 경로."""
-    flow = [[f, ln, func, depth]  # kind 드롭 — line 이벤트만
-            for kind, f, ln, func, depth in payload.get("flow", [])
-            if kind == "line"]
+    flow = []  # [파일, 라인, 함수, 깊이, 변수스냅샷] — line 이벤트만
+    has_vars = False
+    for row in payload.get("flow", []):
+        kind = row[0]
+        if kind != "line":
+            continue
+        snap = row[5] if len(row) > 5 else None  # 6-튜플이면 vars
+        if snap:
+            has_vars = True
+        flow.append([row[1], row[2], row[3], row[4], snap])
     data = {
         "trace_id": payload.get("trace_id"),
         "request": f"{payload.get('method')} {payload.get('path')} → {payload.get('status')}",
@@ -35,6 +42,7 @@ def build_debug_view(payload: dict, out_path: str | Path,
         "event_count": payload.get("event_count"),
         "file_count": payload.get("file_count", len(payload.get("files", {}))),
         "truncated": payload.get("truncated"),
+        "has_vars": has_vars,
         "flow": flow,
         "executed": {f: sorted(set(lines))  # 파일별 실행 라인(마커용)
                      for f, lines in (payload.get("files") or {}).items()},
@@ -95,6 +103,11 @@ button.play { background:var(--accent); color:#06120c; border-color:var(--accent
 select { background:#16202e; color:var(--fg); border:1px solid #2b3d55; border-radius:7px; padding:8px; }
 kbd { background:#16202e; border:1px solid #2b3d55; border-radius:4px; padding:1px 6px; font-size:11px; color:var(--dim); }
 .hint { margin-top:10px; color:var(--dim); font-size:11px; }
+.vars { max-height:34%; overflow:auto; padding:0 4px 8px; font-family:Consolas,monospace; font-size:12px; }
+.vars .v { display:flex; gap:8px; padding:3px 12px; }
+.vars .v .k { color:var(--blue); flex:none; }
+.vars .v .val { color:#c8d6a0; word-break:break-all; }
+.vars .none { color:var(--dim); padding:4px 12px; font-style:italic; }
 </style>
 <header>
   <div class="t"><em>XGEN</em> CREATOR · 디버거 리플레이</div>
@@ -106,6 +119,8 @@ kbd { background:#16202e; border:1px solid #2b3d55; border-radius:4px; padding:1
   <div class="side">
     <h3>콜 스택 (현재)</h3>
     <div class="stack" id="stack"></div>
+    <h3 id="vars-h" style="display:none">변수 (현재 라인 실행 후)</h3>
+    <div class="vars" id="vars"></div>
     <div class="controls">
       <div class="bar"><span id="fill"></span></div>
       <div class="pos" id="pos"></div>
@@ -199,6 +214,21 @@ function render() {
     `스텝 ${(i + 1).toLocaleString()} / ${flow.length.toLocaleString()}  ·  ${func}()  ·  depth ${depth}`;
   document.getElementById("back").disabled = i === 0;
   document.getElementById("fwd").disabled = i === flow.length - 1;
+  if (D.has_vars) {
+    document.getElementById("vars-h").style.display = "block";
+    const vbox = document.getElementById("vars"); vbox.innerHTML = "";
+    const snap = flow[i][4];
+    if (snap && Object.keys(snap).length) {
+      for (const [k, v] of Object.entries(snap)) {
+        const row = document.createElement("div"); row.className = "v";
+        const ke = document.createElement("span"); ke.className = "k"; ke.textContent = k + " =";
+        const ve = document.createElement("span"); ve.className = "val"; ve.textContent = v;
+        row.appendChild(ke); row.appendChild(ve); vbox.appendChild(row);
+      }
+    } else {
+      vbox.innerHTML = '<div class="none">(이 라인엔 지역변수 없음)</div>';
+    }
+  }
 }
 
 function step(delta) {
