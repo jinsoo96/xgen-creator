@@ -89,6 +89,30 @@ class MiddlewareTest(unittest.TestCase):
             self.assertEqual(store.list_ids(), ["evilid"])
             self.assertIsNone(store.wait("missing", timeout=0.3, poll=0.05))
 
+    def test_store_concurrent_writes_safe(self):
+        """멀티프로세스/멀티워커 — 서로 다른 trace_id 동시 저장이 유실·손상 없이 안전.
+
+        원자 교체(os.replace)라 여러 워커가 각자 트레이스를 같은 dir에 써도 안 깨진다.
+        """
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(tmp)
+            ids = [f"w{w}-{k}" for w in range(4) for k in range(25)]
+
+            def writer(chunk):
+                for tid in chunk:
+                    store.save(tid, {"trace_id": tid, "flow": [[tid]]})
+
+            chunks = [ids[i::4] for i in range(4)]
+            threads = [threading.Thread(target=writer, args=(c,)) for c in chunks]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(len(store.list_ids()), 100, "모든 트레이스가 유실 없이 저장")
+            for tid in ids:  # 각 파일이 온전(반쯤 쓰인 것 없음)
+                self.assertEqual(store.load(tid)["trace_id"], tid)
+
 
 if __name__ == "__main__":
     unittest.main()

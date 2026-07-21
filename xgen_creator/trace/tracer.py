@@ -255,6 +255,23 @@ class LineTracer:
             self._depth = max(0, self._depth - 1)
         return None
 
+    def _mon_yield(self, code, offset, retval):
+        # 제너레이터 yield / 코루틴 await 지점 — 프레임이 suspend되어 스택에서 나간다.
+        # 깊이를 줄여야 재개 전까지 caller 라인들이 올바른 깊이로 보인다.
+        if self._scoped(code.co_filename) is not None:
+            self._depth = max(0, self._depth - 1)
+        return None
+
+    def _mon_resume(self, code, offset):
+        # suspend된 프레임이 재개 — 다시 스택에 들어오므로 깊이를 늘린다.
+        mon = sys.monitoring
+        if not self._active:
+            return mon.DISABLE
+        if self._scoped(code.co_filename) is None:
+            return mon.DISABLE
+        self._depth += 1
+        return None
+
     def _start_monitoring(self) -> bool:
         mon = sys.monitoring
         for candidate in range(6):
@@ -266,12 +283,14 @@ class LineTracer:
                 continue
         if self._tool_id is None:
             return False  # 도구 슬롯 소진 — settrace 폴백
-        events = (mon.events.LINE | mon.events.PY_START
-                  | mon.events.PY_RETURN | mon.events.PY_UNWIND)
+        events = (mon.events.LINE | mon.events.PY_START | mon.events.PY_RETURN
+                  | mon.events.PY_UNWIND | mon.events.PY_YIELD | mon.events.PY_RESUME)
         mon.register_callback(self._tool_id, mon.events.LINE, self._mon_line)
         mon.register_callback(self._tool_id, mon.events.PY_START, self._mon_start)
         mon.register_callback(self._tool_id, mon.events.PY_RETURN, self._mon_return)
         mon.register_callback(self._tool_id, mon.events.PY_UNWIND, self._mon_unwind)
+        mon.register_callback(self._tool_id, mon.events.PY_YIELD, self._mon_yield)
+        mon.register_callback(self._tool_id, mon.events.PY_RESUME, self._mon_resume)
         mon.set_events(self._tool_id, events)
         mon.restart_events()  # 이전 세션의 DISABLE 잔재 해제
         return True
@@ -279,8 +298,8 @@ class LineTracer:
     def _stop_monitoring(self) -> None:
         mon = sys.monitoring
         mon.set_events(self._tool_id, 0)
-        for event in (mon.events.LINE, mon.events.PY_START,
-                      mon.events.PY_RETURN, mon.events.PY_UNWIND):
+        for event in (mon.events.LINE, mon.events.PY_START, mon.events.PY_RETURN,
+                      mon.events.PY_UNWIND, mon.events.PY_YIELD, mon.events.PY_RESUME):
             mon.register_callback(self._tool_id, event, None)
         mon.free_tool_id(self._tool_id)
         self._tool_id = None

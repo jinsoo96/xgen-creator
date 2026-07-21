@@ -31,3 +31,33 @@ def outer_after_exc():
     a = 0
     b = with_exception()   # 이 라인들은 outer 깊이 — 예외 후 부풀면 안 됨
     return a + b
+
+
+def _counter(n):
+    i = 0
+    while i < n:
+        yield i            # yield로 suspend — caller가 올바른 깊이로 보여야
+        i += 1
+
+
+def gen_consumer():
+    total = 0
+    for v in _counter(3):  # 이 라인들은 gen_consumer 깊이여야(제너레이터 깊이 아님)
+        total += v
+    return total
+
+
+async def _afetch(x):
+    await __import__("asyncio").sleep(0)  # 진짜 suspend/resume 지점
+    return x + 1
+
+
+async def _ahandler():
+    acc = 0
+    for i in range(3):
+        acc += await _afetch(i)   # await suspend 후 깊이 일관돼야
+    return acc
+
+
+def async_consumer():
+    return __import__("asyncio").run(_ahandler())

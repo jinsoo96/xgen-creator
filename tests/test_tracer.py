@@ -149,6 +149,33 @@ class TracerTest(unittest.TestCase):
             self.assertEqual(min(wexc), min(outer) + 1,
                              f"{backend}: with_exception이 outer보다 한 단계 깊어야")
 
+    def test_generator_yield_resume_depth(self):
+        """제너레이터 yield/resume 후 caller 깊이가 부풀지 않아야 한다 (두 백엔드)."""
+        import sys
+        for backend in ["settrace"] + (["monitoring"] if hasattr(sys, "monitoring") else []):
+            tracer = LineTracer([TESTS_DIR], backend=backend)
+            tracer.start()
+            fixture_target.gen_consumer()
+            result = tracer.stop()
+            evs = [e for e in result.events if e.kind == "line"]
+            cons = [e.depth for e in evs if e.func == "gen_consumer"]
+            self.assertEqual(len(set(cons)), 1,
+                             f"{backend}: 제너레이터 소비 후 깊이 부풀음 {sorted(set(cons))}")
+
+    def test_async_await_suspend_depth(self):
+        """실제 suspend하는 async(await asyncio.sleep) 후 깊이가 부풀지 않아야 한다."""
+        import sys
+        for backend in ["settrace"] + (["monitoring"] if hasattr(sys, "monitoring") else []):
+            tracer = LineTracer([TESTS_DIR], backend=backend)
+            tracer.start()
+            fixture_target.async_consumer()
+            result = tracer.stop()
+            evs = [e for e in result.events if e.kind == "line"]
+            handler = [e.depth for e in evs if e.func == "_ahandler"]
+            self.assertTrue(handler, f"{backend}: async 핸들러 라인 캡처 실패")
+            self.assertEqual(len(set(handler)), 1,
+                             f"{backend}: await suspend 후 깊이 부풀음 {sorted(set(handler))}")
+
     def test_monitoring_backend_parity(self):
         import sys
         if not hasattr(sys, "monitoring"):
